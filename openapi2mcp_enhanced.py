@@ -1928,7 +1928,7 @@ Examples:
   python openapi2mcp.py --url https://api.example.com/openapi.json --output mcp_tools.py --discovery-only
   
   # Generate typed tools only (no discovery)
-  python openapi2mcp.py --spec swagger.json --output tools.py --no-discovery --name "My Custom API"
+  python openapi2mcp.py --spec swagger.json --output tools.py --no-discovery
         """
     )
     
@@ -1959,6 +1959,7 @@ Examples:
         help="Custom server name (defaults to API title from spec)"
     )
     
+    # Logging options
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -1971,12 +1972,20 @@ Examples:
         help="Enable debug logging (even more verbose)"
     )
     
-    parser.add_argument(
+    # Discovery mode options - these are mutually exclusive
+    discovery_group = parser.add_mutually_exclusive_group()
+    discovery_group.add_argument(
         "--no-discovery",
         action="store_true",
         help="Disable discovery tools and only generate typed tools"
     )
+    discovery_group.add_argument(
+        "--discovery-only",
+        action="store_true",
+        help="Generate only discovery tools (list, schema, invoke) without typed endpoint functions"
+    )
     
+    # Header fixing options
     parser.add_argument(
         "--auto-fix-headers",
         action="store_true",
@@ -2013,8 +2022,8 @@ Examples:
         
         parser = ComprehensiveOpenAPIParser(
             spec_path, 
-            auto_fix_headers=getattr(args, 'auto_fix_headers', False),
-            additional_header_patterns=getattr(args, 'header_patterns', None)
+            auto_fix_headers=args.auto_fix_headers,
+            additional_header_patterns=args.header_patterns
         )
         
         # Parse all tools
@@ -2028,22 +2037,34 @@ Examples:
         
         logger.info(f"Found {len(tools)} operations to convert")
         
-        # Determine discovery mode
-        # Discovery is enabled by default unless --no-discovery is used
-        include_discovery = not args.no_discovery
-        discovery_only = discovery_only = getattr(args, 'discovery_only', False)
-        
-        # If discovery-only mode, we still parse all tools for the catalog
-        # but only generate the 3 discovery tools
-        if discovery_only:
+        # Determine discovery mode based on arguments
+        if args.discovery_only:
+            # Discovery-only mode: only generate 3 discovery tools
             include_discovery = True
+            discovery_only = True
+            mode_desc = "discovery-only"
+        elif args.no_discovery:
+            # No discovery: only generate typed tools
+            include_discovery = False
+            discovery_only = False
+            mode_desc = "typed-only"
+        else:
+            # Default: generate both discovery and typed tools
+            include_discovery = True
+            discovery_only = False
+            mode_desc = "full (discovery + typed)"
         
         # Generate output
-        mode_description = "discovery-only" if discovery_only else ("discovery + typed" if include_discovery else "typed-only")
-        logger.info(f"Generating MCP tools file: {args.output} (mode: {mode_description})")
+        logger.info(f"Generating MCP tools file: {args.output} (mode: {mode_desc})")
         
         generator = ComprehensiveMCPToolGenerator(parser)
-        generator.generate_tools_file(tools, args.output, args.name, include_discovery, discovery_only)
+        generator.generate_tools_file(
+            tools, 
+            args.output, 
+            args.name, 
+            include_discovery, 
+            discovery_only
+        )
         
         # Show summary based on mode
         if discovery_only:
@@ -2086,6 +2107,25 @@ Examples:
         if args.auto_fix_headers:
             print(f"\n✅ Auto-fix headers was enabled")
         
+        print(f"\nOutput written to: {args.output}")
+        
+        # Show usage hint based on mode
+        if discovery_only:
+            print("\nUsage example:")
+            print("  from generated_tools import list_api_endpoints, get_api_endpoint_schema, invoke_api_endpoint")
+            print("  endpoints = await list_api_endpoints()")
+        elif not include_discovery:
+            print("\nUsage example:")
+            print("  from generated_tools import <endpoint_function_name>")
+            print("  result = await <endpoint_function_name>(param1='value1')")
+        else:
+            print("\nUsage example:")
+            print("  # Use discovery tools:")
+            print("  from generated_tools import list_api_endpoints")
+            print("  endpoints = await list_api_endpoints()")
+            print("  # Or use typed functions directly:")
+            print("  from generated_tools import <endpoint_function_name>")
+        
         return 0
         
     except FileNotFoundError as e:
@@ -2101,7 +2141,6 @@ Examples:
             import traceback
             traceback.print_exc()
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())
