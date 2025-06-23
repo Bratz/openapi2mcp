@@ -1,0 +1,286 @@
+# MCP Prompts Configuration for TCS BaNCS Core Banking APIs
+# These prompts provide LLM-friendly guidance for banking API discovery and usage
+
+mcp_prompts:
+  discover_banking_apis_by_domain:
+    name: "discover_banking_apis_by_domain"
+    description: "Discover TCS BaNCS banking operations organized by business domain"
+    template: |
+      # TCS BaNCS Core Banking API Operations by Domain
+      
+      This API provides banking operations organized into the following domains:
+      
+      ## Account Management
+      - Account creation, balance inquiries, transaction history
+      - Account blocks and restrictions management
+      - Cash blocks and releases
+      
+      ## Loan Management
+      - Loan origination and details
+      - Repayment schedules and discharge inquiries
+      - Collateral management
+      
+      ## Customer Management
+      - Customer onboarding (KYC)
+      - Customer profile management
+      - Customer search and details
+      
+      ## Financial Accounting
+      - Booking creation for transactions
+      - General ledger operations
+      
+      ## Payments & Transfers
+      - Fund transfers between accounts
+      - Transaction status tracking
+      
+      ## Compliance
+      - AML (Anti-Money Laundering) checks
+      - Regulatory reporting
+      
+      Use `list_api_endpoints(tag="domain_name")` to explore specific domains.
+  
+  explain_banking_endpoint:
+    name: "explain_banking_endpoint"
+    description: "Get detailed explanation of a specific banking API endpoint with field validations"
+    variables:
+      endpoint_name: "Name of the banking endpoint to explain"
+    template: |
+      # {{ endpoint_name }}
+      
+      ## Required Headers (Common to all endpoints)
+      - `entity`: Entity code (e.g., GPRDTTSTOU)
+      - `userId`: User ID for authentication
+      - `languageCode`: Language preference (e.g., 1 for English)
+      
+      ## Endpoint-Specific Headers
+      Depending on the operation, additional headers may be required:
+      - `accountReference`: For account-specific operations
+      - `loanReference`: For loan-specific operations
+      - `customerReference`: For customer-specific operations
+      
+      ## Field Validations
+      Common validation rules across TCS BaNCS:
+      - Dates: YYYYMMDD format (e.g., 20250509)
+      - Currency: ISO 4217 codes (USD, EUR, INR)
+      - Account IDs: Alphanumeric, typically 15 digits
+      - Customer IDs: Numeric, typically 6 digits
+      - Amounts: Positive decimals with 2 decimal places
+      
+      Use `get_api_endpoint_schema("{{ endpoint_name }}")` for complete field details.
+  
+  banking_api_quick_start:
+    name: "banking_api_quick_start"
+    description: "Quick start guide for using TCS BaNCS Core Banking APIs"
+    template: |
+      # TCS BaNCS Core Banking API Quick Start Guide
+      
+      ## Environment Setup
+      1. Base URL: `https://demoapps.tcsbancs.com/Core`
+      2. Register at: https://marketplace.tcsbancs.com
+      3. Set environment variables:
+         ```bash
+         export API_BASE_URL="https://demoapps.tcsbancs.com/Core"
+         export BANCS_ENTITY="GPRDTTSTOU"  # Your entity code
+         export BANCS_USER_ID="1"          # Your user ID
+         export BANCS_LANGUAGE="1"         # Language code
+         ```
+      
+      ## Common Headers (Required for ALL requests)
+      ```json
+      {
+        "entity": "${BANCS_ENTITY}",
+        "userId": "${BANCS_USER_ID}",
+        "languageCode": "${BANCS_LANGUAGE}"
+      }
+      ```
+      
+      ## Discovery Commands
+      - List all operations: `await list_api_endpoints()`
+      - Search banking operations: `await list_api_endpoints(tag="account")`
+      - Get operation details: `await get_api_endpoint_schema("get_account_balance")`
+      
+      ## Common Banking Workflows
+      1. **Check Account Balance**:
+         ```python
+         await get_account_balance(accountreference="101000000101814")
+         ```
+      
+      2. **Create Customer**:
+         ```python
+         await customer_create({
+           "businessPartner": {...},
+           "individual": {...},
+           "identification": [...]
+         })
+         ```
+      
+      3. **Transfer Funds**:
+         ```python
+         await initiate_payment({
+           "sourceAccount": "101000000101814",
+           "destinationAccount": "101000000104016",
+           "amount": 50.00,
+           "currency": "USD"
+         })
+         ```
+  
+  banking_error_handling:
+    name: "banking_error_handling"
+    description: "Guide for handling TCS BaNCS API errors"
+    template: |
+      # TCS BaNCS API Error Handling Guide
+      
+      ## Common Banking Error Patterns
+      
+      1. **Authentication Errors (401)**
+         - Missing required headers (entity, userId, languageCode)
+         - Invalid entity code or user credentials
+         - Solution: Verify all common headers are present
+      
+      2. **Business Validation Errors (400)**
+         - Invalid account/customer/loan reference
+         - Insufficient funds
+         - Account restrictions/blocks
+         - Date format errors (use YYYYMMDD)
+         - Invalid currency codes
+      
+      3. **Not Found Errors (404)**
+         - Account/Customer/Loan not found
+         - Check reference numbers are correct
+         - Verify entity context
+      
+      4. **Forbidden Errors (403)**
+         - Insufficient privileges
+         - Account blocked for operation
+         - Compliance restrictions (AML flags)
+      
+      ## Field Validation Rules
+      - **Dates**: Always use YYYYMMDD format
+      - **Amounts**: Positive decimals, 2 decimal places
+      - **Currency**: ISO 4217 codes (USD, EUR, INR)
+      - **Account References**: 15-digit alphanumeric
+      - **Customer IDs**: 6-digit numeric
+      
+      ## Error Response Format
+      ```json
+      {
+        "error": true,
+        "errorCode": "ACC001",
+        "message": "Account not found",
+        "details": {
+          "accountReference": "101000000101814",
+          "entity": "GPRDTTSTOU"
+        }
+      }
+      ```
+  
+  find_banking_operations_by_entity:
+    name: "find_banking_operations_by_entity"
+    description: "Find operations related to a specific banking entity (account, customer, loan)"
+    variables:
+      entity_type: "Type of banking entity (account, customer, loan, payment)"
+      entity_id: "Optional specific entity ID to search for"
+    template: |
+      # Banking Operations for {{ entity_type }}
+      
+      Searching for operations related to '{{ entity_type }}'...
+      {% if entity_id %}
+      For specific {{ entity_type }}: {{ entity_id }}
+      {% endif %}
+      
+      ## Available Operations:
+      {% if entity_type == "account" %}
+      - Get balance: `get_account_balance`
+      - Get transactions: `get_account_transactions`
+      - Block account: `account_block`
+      - Create cash block: `cash_block`
+      {% elif entity_type == "customer" %}
+      - Create customer: `customer_create`
+      - Get details: `get_customer_details`
+      - Search customers: `get_customer_search`
+      {% elif entity_type == "loan" %}
+      - Create loan: `create_loan`
+      - Get details: `get_loan_details`
+      - Repayment schedule: `get_loans_repayment_schedule`
+      {% endif %}
+      
+      Use `search_operations(query="{{ entity_type }}")` for complete list.
+  
+  generate_banking_request:
+    name: "generate_banking_request"
+    description: "Generate example request for a banking endpoint"
+    variables:
+      endpoint_name: "Name of the banking endpoint"
+      scenario: "Business scenario (e.g., 'new_savings_account', 'check_balance', 'transfer_funds')"
+    template: |
+      # Example Request for {{ endpoint_name }}
+      
+      ## Common Headers (Always Required)
+      ```python
+      headers = {
+        "entity": os.getenv("BANCS_ENTITY", "GPRDTTSTOU"),
+        "userId": os.getenv("BANCS_USER_ID", "1"),
+        "languageCode": os.getenv("BANCS_LANGUAGE", "1")
+      }
+      ```
+      
+      {% if scenario == "new_savings_account" %}
+      ## Create Savings Account
+      ```python
+      account_data = {
+        "account": {
+          "customerId": 146039,
+          "accountType": 1,  # 1=Savings
+          "accountCurrency": "USD",
+          "accountName": "Personal Savings Account",
+          "branchId": "101",
+          "product": 1037  # Savings product code
+        }
+      }
+      
+      result = await account_create(account_data)
+      print(f"New account created: {result['accountReference']}")
+      ```
+      {% elif scenario == "check_balance" %}
+      ## Check Account Balance
+      ```python
+      # Set the account reference in header or parameter
+      balance = await get_account_balance(
+        accountreference="101000000101814"
+      )
+      print(f"Available balance: {balance['currency']} {balance['availableBalance']}")
+      ```
+      {% elif scenario == "transfer_funds" %}
+      ## Internal Fund Transfer
+      ```python
+      transfer_data = {
+        "payment": {
+          "sourceAccount": "101000000101814",
+          "destinationAccount": "101000000104016",
+          "amount": 100.00,
+          "currency": "USD",
+          "transactionDate": "20250509",
+          "description": "Internal transfer",
+          "paymentType": "INTERNAL"
+        }
+      }
+      
+      result = await initiate_payment(transfer_data)
+      print(f"Transfer successful: {result['transactionId']}")
+      ```
+      {% endif %}
+
+# Prompt categories for TCS BaNCS APIs
+prompt_categories:
+  discovery:
+    - discover_banking_apis_by_domain
+    - find_banking_operations_by_entity
+  
+  guidance:
+    - banking_api_quick_start
+    - banking_error_handling
+    - explain_banking_endpoint
+    - generate_banking_request
+  
+  troubleshooting:
+    - banking_error_handling
