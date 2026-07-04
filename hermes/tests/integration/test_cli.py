@@ -88,3 +88,36 @@ def test_budget_exceeded_maps_to_exit_3(tmp_path, monkeypatch):
     import json
     meta = json.loads((tmp_path / "r_budget" / "run.json").read_text())
     assert meta["status"] == "interrupted:budget"
+
+
+def test_report_command_renders_html_and_md(tmp_path, monkeypatch):
+    import hermes.llm as llm_mod
+    from hermes.cli import main
+    from tests.conftest import FakeLLM, detected
+
+    fake = FakeLLM({("getAccountBalance", "LAZY"): detected("LAZY")})
+    monkeypatch.setattr(llm_mod, "AnthropicLLM", lambda config, client=None: fake)
+    assert main(["scan", "--spec", str(GOLDEN), "--out", str(tmp_path), "--run-id", "r_rep",
+                 "--tags", "Accounts", "--yes"]) == 0
+    run_dir = str(tmp_path / "r_rep")
+    assert main(["report", "--run", run_dir]) == 0
+    html = (tmp_path / "r_rep" / "report.html").read_text(encoding="utf-8")
+    assert "Per-tag rollup" in html  # full dashboard, not the placeholder
+    # Appendix-C markdown for a specific endpoint
+    import contextlib, io
+
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = main(["report", "--run", run_dir, "--endpoint",
+                   "GET /accounts/{accountId}/balance", "--md"])
+    assert rc == 0
+    md = buf.getvalue()
+    assert "## Identified Smells" in md and "Lazy" in md
+
+
+def test_offline_eval_missing_recordings_exits_2(tmp_path, monkeypatch):
+    from hermes.cli import main
+    import hermes.eval.harness as harness
+
+    monkeypatch.setattr(harness, "RECORDINGS", tmp_path / "none.jsonl")
+    assert main(["eval"]) == 2

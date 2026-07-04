@@ -21,6 +21,16 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
+### 2026-07-04 — M6
+
+- **f1_macro averages over ACTIVE labels only** (labels with any tp/fp/fn); a label absent from both gold and predictions everywhere would score a vacuous 1.0 and inflate macro.
+- **Flake shield re-runs only the suspect smells** (those with any FP/FN) when a gate fails, and keeps the better per-smell F1 run — cheaper than a full re-run, matches 02-TEST-PLAN §3.
+- **Live eval bypasses the response cache** (fresh samples are the point; the flake shield would otherwise replay identical results). Recordings are written wholesale per live eval with a `_meta` line carrying model + prompt versions; offline replay fails loudly on any version mismatch.
+- **`hermes eval --report` writes eval_report.json under hermes/runs/** (CLAUDE.md rule 4).
+- **Dashboard escapes embedded JSON with `</`→`<\\/` wrapped in Markup** (autoescape must not entity-encode the JSON, but script-breakout must stay impossible).
+- **Recordings layout deviation**: 02-TEST-PLAN §3 sketched `tests/fixtures/recorded/<prompt_version>/`; implemented as a single flat `responses.jsonl` with per-record prompt_version fields + a `_meta` line (same staleness guarantees, simpler diffing). Failing live runs write to `responses.failed.jsonl` and never clobber the green baseline; incomplete recordings (detector errors) are a gate failure.
+- **BLOCKED: `hermes eval --live` and the M7 smoke require ANTHROPIC_API_KEY**, which this build environment does not have. Offline machinery (harness, metrics, gates, recordings plumbing, replay) is complete and unit-tested; the live gate run + committed recordings are pending credentials.
+
 ### 2026-07-04 — M5
 
 - **Cache-only resume; no LangGraph checkpointer.** SqliteSaver adds serialization constraints on Send fan-out for no benefit — the content-hash cache already makes an interrupted run's completed pairs free on re-run (this was pre-authorized in the M2/architecture notes). `--resume` is therefore just "same run-id, cache does the work"; findings.jsonl appends stay idempotent by id.

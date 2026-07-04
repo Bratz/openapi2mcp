@@ -4,6 +4,7 @@ findings.raw.jsonl, endpoints.jsonl, run.json}. Appends are idempotent by id."""
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from hermes.schemas.models import EndpointVerdict, Finding, UsageRecord
@@ -67,6 +68,7 @@ class RunStore:
         }
         meta = {
             "run_id": self.run_id,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "status": status,
             "config": config,
             "counts": counts,

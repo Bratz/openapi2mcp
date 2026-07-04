@@ -29,17 +29,21 @@ def test_help_lists_all_subcommands():
 
 
 @pytest.mark.parametrize("name", SUBCOMMANDS)
-def test_every_subcommand_parses_and_dispatches(name):
-    # Implemented commands hit their real error contract on a missing spec
-    # (exit 2 per docs/00-SPEC.md §6); unimplemented ones fail loudly with 1.
-    argv, expected = {
-        "scan": (["scan", "--spec", "x.json"], 2),      # implemented: missing spec -> 2
-        "estimate": (["estimate", "--spec", "x.json"], 2),
-        "inspect": (["inspect", "--spec", "x.json", "--endpoint", "GET /x"], 2),
-        "report": (["report", "--run", "runs/r1"], 1),  # lands in M6
-        "eval": (["eval"], 1),                          # lands in M6
+def test_every_subcommand_parses_and_dispatches(name, monkeypatch, tmp_path):
+    # Every command parses and hits its real error contract on missing input
+    # (exit 2 per docs/00-SPEC.md §6).
+    if name == "eval":  # pin to missing-recordings regardless of repo state
+        import hermes.eval.harness as harness
+
+        monkeypatch.setattr(harness, "RECORDINGS", tmp_path / "none.jsonl")
+    argv = {
+        "scan": ["scan", "--spec", "x.json"],
+        "estimate": ["estimate", "--spec", "x.json"],
+        "inspect": ["inspect", "--spec", "x.json", "--endpoint", "GET /x"],
+        "report": ["report", "--run", str(tmp_path / "not-a-run")],
+        "eval": ["eval"],
     }[name]
-    assert main(argv) == expected
+    assert main(argv) == 2
 
 
 def test_bare_tags_flag_is_a_usage_error():

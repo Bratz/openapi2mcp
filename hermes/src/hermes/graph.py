@@ -269,6 +269,7 @@ def _config_echo(spec: LoadedSpec, config: HermesConfig, consolidate_enabled: bo
     credentials or raw environment (docs/03-DEPLOYMENT secrets policy)."""
     return {
         "spec_title": spec.title,
+        "spec_version": spec.version,
         "detect_model": config.detect_model,
         "consolidate_model": config.consolidate_model,
         "concurrency": config.concurrency,

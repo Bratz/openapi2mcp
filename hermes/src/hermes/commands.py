@@ -183,8 +183,68 @@ def cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    return _not_implemented("report", "M6")
+    from pathlib import Path
+
+    from hermes.report.render import render_endpoint_md, render_run
+    from hermes.store import RunStore
+
+    run_dir = Path(args.run)
+    if not (run_dir / "run.json").exists():
+        _err("report", f"no run.json in {run_dir} — not a hermes run directory")
+        return 2
+    store = RunStore(run_dir.parent, run_dir.name)
+    if args.md and not args.endpoint:
+        _err("report", "--md requires --endpoint (Appendix-C markdown is per-endpoint)")
+        return 2
+    if args.endpoint:
+        if not args.md:
+            _err("report", "--endpoint requires --md (Appendix-C markdown report)")
+            return 2
+        try:
+            print(render_endpoint_md(store, args.endpoint), end="")
+        except KeyError as exc:
+            _err("report", exc.args[0])
+            return 2
+        return 0
+    out = Path(args.out) if args.out else run_dir / "report.html"
+    out.write_text(render_run(store), encoding="utf-8")
+    print(f"wrote {out}")
+    return 0
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    return _not_implemented("eval", "M6")
+    import json
+
+    from hermes.eval.harness import StaleRecordingsError, format_report, run_live_eval, run_offline_eval
+
+    import os
+
+    from hermes.config import ConfigError, HermesConfig
+
+    try:
+        config = HermesConfig.resolve(args)
+    except ConfigError as exc:
+        _err("eval", str(exc))
+        return 2
+    try:
+        if args.live:
+            from hermes.llm import AnthropicLLM
+
+            if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
+                _err("eval", "--live needs credentials: set ANTHROPIC_API_KEY (or ANTHROPIC_AUTH_TOKEN); "
+                             "without them every call would 401 and burn the flake-shield retries")
+                return 2
+            llm = AnthropicLLM(config)
+            result = run_live_eval(llm, detect_model=config.detect_model)
+        else:
+            result = run_offline_eval()
+    except (FileNotFoundError, StaleRecordingsError) as exc:
+        _err("eval", str(exc))
+        return 2
+    print(format_report(result))
+    if args.report:
+        out = config.out_dir / "eval_report.json"  # resolved config: HERMES_OUT honored (CLAUDE.md rule 4)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {out}")
+    return 0 if not result["gate_failures"] else 1

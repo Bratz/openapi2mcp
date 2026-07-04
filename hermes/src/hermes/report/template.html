@@ -1,0 +1,167 @@
+<meta charset="utf-8">
+<title>Hermes — {{ api_title }}</title>
+<style>
+  :root { --border:#d0d4da; --muted:#667; --accent:#1a5fb4; --bad:#c01c28; --warn:#e5a50a; --ok:#26a269; }
+  body { font-family: system-ui, sans-serif; margin: 1.5rem 2rem; color:#1a1c20; }
+  h1 { font-size: 1.4rem; margin-bottom:.2rem; }
+  .meta { color: var(--muted); font-size:.9rem; margin-bottom: 1rem; }
+  .cards { display:flex; flex-wrap:wrap; gap:.6rem; margin:1rem 0; }
+  .card { border:1px solid var(--border); border-radius:6px; padding:.5rem .9rem; min-width:7rem; }
+  .card b { display:block; font-size:1.3rem; }
+  .card span { font-size:.78rem; color:var(--muted); }
+  .filters { display:flex; flex-wrap:wrap; gap:.5rem; margin:.8rem 0; align-items:center; }
+  select, input[type=search] { padding:.3rem .4rem; border:1px solid var(--border); border-radius:4px; }
+  table { border-collapse:collapse; width:100%; font-size:.86rem; }
+  th, td { border:1px solid var(--border); padding:.35rem .55rem; text-align:left; vertical-align:top; }
+  th { cursor:pointer; background:#f4f5f7; user-select:none; white-space:nowrap; }
+  tr.detail td { background:#fafbfc; }
+  .sev-high { color:var(--bad); font-weight:600; } .sev-medium { color:var(--warn); font-weight:600; } .sev-low { color:var(--ok); }
+  .pager { margin:.7rem 0; display:flex; gap:.5rem; align-items:center; font-size:.9rem; }
+  button { padding:.25rem .7rem; border:1px solid var(--border); background:#fff; border-radius:4px; cursor:pointer; }
+  .mdreport { white-space:pre-wrap; font-family:ui-monospace,monospace; font-size:.8rem; }
+  .rollup td:first-child { font-weight:600; }
+  .errors { color:var(--bad); }
+  h2 { font-size:1.05rem; margin-top:1.6rem; }
+</style>
+
+<h1>Hermes smell report — {{ api_title }}</h1>
+<div class="meta">
+  run {{ run_id }} · {{ generated_at }} · spec: {{ spec_version }} · scanned {{ generated_note }} ·
+  models: {{ detect_model }} (detect){% if consolidate %} + {{ consolidate_model }} (consolidate){% endif %}
+</div>
+
+<div class="cards">
+  <div class="card"><b>{{ counts.operations_scanned }}</b><span>operations scanned</span></div>
+  <div class="card"><b>{{ counts.detections }}</b><span>detections</span></div>
+  <div class="card"><b>{{ counts.avg_smells_per_endpoint }}</b><span>avg smells / endpoint (paper: 4.08)</span></div>
+  <div class="card"><b>{{ counts.endpoints_with_detections }}</b><span>endpoints affected</span></div>
+  {% if counts.detector_errors %}<div class="card errors"><b>{{ counts.detector_errors }}</b><span>detector errors</span></div>{% endif %}
+  <div class="card"><b class="sev-high">{{ severity_rollup.high }}</b><span>high severity</span></div>
+  <div class="card"><b class="sev-medium">{{ severity_rollup.medium }}</b><span>medium severity</span></div>
+  <div class="card"><b class="sev-low">{{ severity_rollup.low }}</b><span>low severity</span></div>
+</div>
+
+<h2>Detections per smell (% of scanned operations)</h2>
+<table class="rollup" id="smell-rollup"><tr><th>Smell</th><th>Detections</th><th>% of operations</th></tr>
+{% for row in smell_rollup %}<tr><td>{{ row.name }}</td><td>{{ row.count }}</td><td>{{ row.pct }}%</td></tr>
+{% endfor %}</table>
+
+<h2>Per-tag rollup</h2>
+<table class="rollup"><tr><th>Tag</th><th>Operations w/ detections</th><th>Detections</th><th>Top smell</th></tr>
+{% for row in tag_rollup %}<tr><td>{{ row.tag }}</td><td>{{ row.endpoints }}</td><td>{{ row.count }}</td><td>{{ row.top }}</td></tr>
+{% endfor %}</table>
+
+<h2>Top endpoints</h2>
+<table class="rollup"><tr><th>Endpoint</th><th>Smells</th><th>Verdict</th></tr>
+{% for row in worst %}<tr><td>{{ row.key }}</td><td>{{ row.smells }}</td><td>{{ row.verdict }}</td></tr>
+{% endfor %}</table>
+
+<h2>Findings</h2>
+<div class="filters">
+  <select id="f-smell"><option value="">smell: all</option></select>
+  <select id="f-category"><option value="">category: all</option>
+    <option>documentation</option><option>rest</option></select>
+  <select id="f-severity"><option value="">severity: all</option>
+    <option>high</option><option>medium</option><option>low</option></select>
+  <select id="f-tag"><option value="">tag: all</option></select>
+  <input type="search" id="f-path" placeholder="path contains…">
+  <span id="match-count"></span>
+</div>
+<table id="findings">
+  <thead><tr>
+    <th data-k="method">Method</th><th data-k="path">Path</th><th data-k="smell">Smell</th>
+    <th data-k="severity">Severity</th><th data-k="confidence">Conf.</th><th>Summary</th>
+  </tr></thead>
+  <tbody></tbody>
+</table>
+<div class="pager">
+  <button id="prev">&laquo; prev</button><span id="page-info"></span><button id="next">next &raquo;</button>
+</div>
+
+<script type="application/json" id="hermes-findings">{{ findings_json }}</script>
+<script type="application/json" id="hermes-verdicts">{{ verdicts_json }}</script>
+<script type="application/json" id="hermes-meta">{{ meta_json }}</script>
+<script>
+const SEV = {high:0, medium:1, low:2};
+const findings = JSON.parse(document.getElementById('hermes-findings').textContent);
+const META = JSON.parse(document.getElementById('hermes-meta').textContent);
+const verdicts = JSON.parse(document.getElementById('hermes-verdicts').textContent);
+const byEndpoint = {};
+findings.forEach(f => { const k = f.endpoint.method + ' ' + f.endpoint.path; (byEndpoint[k] ||= []).push(f); });
+const state = { page: 0, size: 100, sort: null, dir: 1 };
+const sel = id => document.getElementById(id);
+[...new Set(findings.map(f => f.smell))].sort().forEach(s => sel('f-smell').append(new Option(s, s)));
+[...new Set(findings.flatMap(f => f.endpoint.tags))].sort().forEach(t => sel('f-tag').append(new Option(t, t)));
+function filtered() {
+  const smell = sel('f-smell').value, cat = sel('f-category').value, sev = sel('f-severity').value,
+        tag = sel('f-tag').value, path = sel('f-path').value.toLowerCase();
+  let rows = findings.filter(f =>
+    (!smell || f.smell === smell) && (!cat || f.category === cat) &&
+    (!sev || f.extensions.severity === sev) && (!tag || f.endpoint.tags.includes(tag)) &&
+    (!path || f.endpoint.path.toLowerCase().includes(path)));
+  if (state.sort) rows.sort((a, b) => {
+    const va = keyOf(a, state.sort), vb = keyOf(b, state.sort);
+    return (va < vb ? -1 : va > vb ? 1 : 0) * state.dir;
+  });
+  return rows;
+}
+function keyOf(f, k) {
+  if (k === 'severity') return SEV[f.extensions.severity];
+  if (k === 'confidence') return -f.extensions.confidence;
+  if (k === 'method' || k === 'path') return f.endpoint[k];
+  return f[k];
+}
+function mdReport(key) {
+  // Appendix-C shape (00-SPEC §7.1) + extension evidence excerpts (§7.2 item 4).
+  const group = byEndpoint[key] || [];
+  const v = verdicts.find(x => x.endpoint_key === key);
+  const display = s => META.smell_display[s] || s;
+  let md = `## API Info\n- Title: "${META.api_title}"\n`;
+  md += `## Endpoint Info\n- Method: "${key.split(' ')[0]}"\n- Path: "${key.split(' ').slice(1).join(' ')}"\n`;
+  md += `## Model\n- ${META.detect_model}\n`;
+  md += `## Identified Smells\n${group.map(f => display(f.smell)).join(', ')}\n### Explanations\n`;
+  group.forEach(f => {
+    md += `### ${display(f.smell)}\n` + f.justification.map(j => `- ${j}`).join('\n') + '\n';
+    f.extensions.evidence.forEach(e => { md += `  evidence @ ${e.location}: "${e.excerpt}"\n`; });
+  });
+  md += `## Improvement Suggestions\n`;
+  group.forEach(f => f.suggestions.forEach(s => { md += `${s.action_title} | ${s.description}\n`; }));
+  if (v) md += `\nVerdict: ${v.verdict} (${v.note})`;
+  return md;
+}
+function esc(t) { const d = document.createElement('span'); d.textContent = t; return d.innerHTML; }
+function render() {
+  const rows = filtered();
+  const pages = Math.max(1, Math.ceil(rows.length / state.size));
+  state.page = Math.min(state.page, pages - 1);
+  const slice = rows.slice(state.page * state.size, (state.page + 1) * state.size);
+  const body = document.querySelector('#findings tbody');
+  body.innerHTML = '';
+  slice.forEach(f => {
+    const tr = document.createElement('tr');
+    const key = f.endpoint.method + ' ' + f.endpoint.path;
+    tr.innerHTML = `<td>${esc(f.endpoint.method)}</td><td>${esc(f.endpoint.path)}</td>` +
+      `<td>${esc(f.smell)}</td><td class="sev-${f.extensions.severity}">${esc(f.extensions.severity)}</td>` +
+      `<td>${f.extensions.confidence.toFixed(2)}</td><td>${esc(f.justification[0] || '')}</td>`;
+    tr.style.cursor = 'pointer';
+    tr.onclick = () => {
+      if (tr.nextSibling && tr.nextSibling.classList?.contains('detail')) { tr.nextSibling.remove(); return; }
+      const d = document.createElement('tr'); d.className = 'detail';
+      d.innerHTML = `<td colspan="6"><div class="mdreport">${esc(mdReport(key))}</div></td>`;
+      tr.after(d);
+    };
+    body.append(tr);
+  });
+  sel('match-count').textContent = `${rows.length} findings`;
+  sel('page-info').textContent = `page ${state.page + 1} / ${pages}`;
+}
+['f-smell','f-category','f-severity','f-tag','f-path'].forEach(id =>
+  sel(id).addEventListener('input', () => { state.page = 0; render(); }));
+sel('prev').onclick = () => { state.page = Math.max(0, state.page - 1); render(); };
+sel('next').onclick = () => { state.page += 1; render(); };
+document.querySelectorAll('#findings th[data-k]').forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  state.dir = state.sort === k ? -state.dir : 1; state.sort = k; render();
+});
+render();
+</script>
