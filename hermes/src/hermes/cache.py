@@ -14,6 +14,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from hermes.schemas.models import AgentResponse
 
 
@@ -44,22 +46,38 @@ class ResponseCache:
         return self.get_as(key, AgentResponse)
 
     def get_as(self, key: str, model_cls):
-        """Typed fetch — consolidations cache ConsolidationResponse in the same table."""
+        """Typed fetch — consolidations cache ConsolidationResponse in the same table.
+
+        Degrades to a miss instead of raising: a locked db (second hermes
+        process) or a blob written under an older response schema must never
+        abort a scan — the pair is re-bought and the row overwritten."""
         if not self.read_enabled:
             return None
-        with self._lock:
-            row = self._conn.execute("SELECT response_json FROM cache WHERE key = ?", (key,)).fetchone()
+        try:
+            with self._lock:
+                row = self._conn.execute("SELECT response_json FROM cache WHERE key = ?", (key,)).fetchone()
+        except sqlite3.OperationalError:
+            return None
         if row is None:
             return None
-        return model_cls.model_validate_json(row[0])
+        try:
+            return model_cls.model_validate_json(row[0])
+        except ValidationError:
+            return None
 
     def put(self, key: str, response, model: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO cache (key, response_json, model, created_at) VALUES (?, ?, ?, ?)",
-                (key, response.model_dump_json(), model, datetime.now(timezone.utc).isoformat()),
-            )
-            self._conn.commit()
+        try:
+            with self._lock:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO cache (key, response_json, model, created_at) VALUES (?, ?, ?, ?)",
+                    (key, response.model_dump_json(), model, datetime.now(timezone.utc).isoformat()),
+                )
+                self._conn.commit()
+        except sqlite3.OperationalError:
+            # Write contention (shared cache.db, second process holding the
+            # lock) must never abort a scan; worst case the pair is re-bought
+            # on resume. The response is still used by the current run.
+            pass
 
     def close(self) -> None:
         with self._lock:

@@ -84,7 +84,7 @@ Cardin.diff  -0.31    report   -0.53
 
 ### Recorded responses (offline eval)
 
-After the first green live eval, record all raw `AgentResponse` JSONs to `tests/fixtures/recorded/<prompt_version>/`. `hermes eval` (no `--live`) replays them — keeping the metrics pipeline regression-tested in CI for free. A prompt-version bump orphans recordings; the harness must fail loudly ("recordings stale, run --live") rather than silently reusing old ones.
+After the first green live eval, record all raw `AgentResponse` JSONs to `tests/fixtures/recorded/responses.jsonl` (flat file with per-record `prompt_version` fields + a `_meta` line — DECISIONS M6). `hermes eval` (no `--live`) replays them — keeping the metrics pipeline regression-tested in CI for free. A prompt-version bump orphans recordings; the harness must fail loudly ("recordings stale, run --live") rather than silently reusing old ones.
 
 ## 4. Unit test inventory (minimum)
 

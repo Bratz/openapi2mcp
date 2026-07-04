@@ -81,7 +81,9 @@ def cmd_estimate(args: argparse.Namespace) -> int:
     est = _estimate(spec, args, config)
     print(f"spec: {spec.title}")
     print(f"operations (after filters): {est['operations']}")
-    print(f"detection calls: {est['detect_calls']} ({est['operations']} ops x 9 smells)")
+    from hermes.smells.catalog import SMELLS
+
+    print(f"detection calls: {est['detect_calls']} ({est['operations']} ops x {len(SMELLS)} smells)")
     print(f"estimated consolidations: {est['consolidations_est']}")
     print(f"estimated cost: ~${est['cost_usd_est']} "
           f"(models: {config.detect_model} + {config.consolidate_model}; no cache savings assumed)")
@@ -193,6 +195,12 @@ def cmd_report(args: argparse.Namespace) -> int:
         _err("report", f"no run.json in {run_dir} — not a hermes run directory")
         return 2
     store = RunStore(run_dir.parent, run_dir.name)
+    status = store.load_run_meta().get("status", "?")
+    if status != "completed":
+        # Interrupted re-runs rewrite only run.json; findings/report on disk may
+        # belong to an earlier completed run under the same run-id.
+        _err("report", f"warning: run status is {status!r} — artifacts may be stale "
+                       "(from an earlier completed run with this run-id)")
     if args.md and not args.endpoint:
         _err("report", "--md requires --endpoint (Appendix-C markdown is per-endpoint)")
         return 2
@@ -237,7 +245,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
             llm = AnthropicLLM(config)
             result = run_live_eval(llm, detect_model=config.detect_model)
         else:
-            result = run_offline_eval()
+            result = run_offline_eval(expected_detect_model=config.detect_model)
     except (FileNotFoundError, StaleRecordingsError) as exc:
         _err("eval", str(exc))
         return 2

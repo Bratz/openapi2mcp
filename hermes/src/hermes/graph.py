@@ -20,7 +20,7 @@ from langgraph.types import Send
 
 from hermes.cache import ResponseCache, cache_key
 from hermes.config import HermesConfig
-from hermes.llm import LLM, DetectorFailure
+from hermes.llm import CONSOLIDATOR_PROMPT_VERSION, LLM, DetectorFailure
 from hermes.nodes import apply_consolidation, rule_based_verdict
 from hermes.reducer import reduce_operation
 from hermes.schemas.models import ConsolidationResponse, EndpointInfo, UsageRecord, build_finding
@@ -75,11 +75,17 @@ def build_scan_graph(
     meter = _CostMeter(config.max_cost_usd)
 
     def node_reduce(state: ScanState) -> dict:
-        erds = {}
+        erds, errors = {}, []
         for op in operations:
-            erd = reduce_operation(spec, op)
+            try:
+                erd = reduce_operation(spec, op)
+            except Exception as exc:  # hostile spec content must never abort the scan
+                errors.append({"endpoint_key": op.endpoint_key, "smell_id": "_reducer",
+                               "error": f"{exc.__class__.__name__}: {exc}"})
+                continue
             erds[op.endpoint_key] = {"yaml": erd.yaml, "truncation_applied": erd.truncation_applied}
         return {
+            "errors": errors,
             "api_title": spec.title,
             "operations": [
                 {"path": o.path, "method": o.method, "operation_id": o.operation_id, "tags": list(o.tags)}
@@ -145,7 +151,9 @@ def build_scan_graph(
 
     def node_collect(state: ScanState) -> dict:
         """Group findings per endpoint; consolidate (LLM) or rule-verdict."""
-        by_endpoint: dict[str, list] = {op.endpoint_key: [] for op in operations}
+        # Keyed off the ERDs actually built: an operation whose reduction
+        # failed gets a _reducer error record, not a spurious clean verdict.
+        by_endpoint: dict[str, list] = {key: [] for key in state.get("erds", {})}
         for finding in state.get("findings", []):
             by_endpoint[f"{finding.endpoint.method} {finding.endpoint.path}"].append(finding)
         verdicts, extra_usage, errors = [], [], []
@@ -159,7 +167,11 @@ def build_scan_graph(
                       "justification": f.justification} for f in group],
                     indent=1,
                 )
-                ck = cache_key(payload, "_consolidator", "consolidator-v1", config.consolidate_model)
+                # The key covers BOTH message parts (summary carries operation_id
+                # /tags) and the prompt version constant that lives next to
+                # CONSOLIDATOR_SYSTEM in llm.py — editing either invalidates.
+                ck = cache_key(f"{summary}\x00{payload}", "_consolidator",
+                               CONSOLIDATOR_PROMPT_VERSION, config.consolidate_model)
                 cached = cache.get_as(ck, ConsolidationResponse)
                 try:
                     if cached is not None:
@@ -178,6 +190,7 @@ def build_scan_graph(
                     errors.append({"endpoint_key": key, "smell_id": "_consolidator", "error": str(exc)})
                     if exc.usage is not None:
                         extra_usage.append(exc.usage)
+                        meter.add(exc.usage.cost_usd)  # failed spend still counts toward the budget
             consolidated_findings.extend(group)
             verdicts.append(rule_based_verdict(key, op.operation_id, group))
         # findings channel already holds pre-consolidation findings; the
@@ -219,6 +232,10 @@ def run_scan(
         spec.operations, tags=tags, path_globs=path_globs, sample=sample,
         seed=config.seed, max_endpoints=max_endpoints,
     )
+    # Echoed into run.json so a --resume with different filters is detectable.
+    filters = {"tags": list(tags) if tags else None,
+               "paths": list(path_globs) if path_globs else None,
+               "sample": sample, "max_endpoints": max_endpoints}
     compiled, meter = build_scan_graph(
         spec=spec, operations=operations, llm=llm, cache=cache,
         config=config, consolidate_enabled=consolidate_enabled,
@@ -236,7 +253,7 @@ def run_scan(
         # pairs are safe in the response cache.
         status = "interrupted:budget" if isinstance(exc, BudgetExceeded) else "interrupted"
         store.write_run_meta(
-            config=_config_echo(spec, config, consolidate_enabled),
+            config=_config_echo(spec, config, consolidate_enabled, filters),
             counts={"operations_scanned": len(operations), "interrupted_cost_usd": round(meter.total, 4)},
             usage=[],
             errors=[{"error": str(exc)}],
@@ -249,7 +266,7 @@ def run_scan(
     store.write_raw(state.get("raw", []))
     store.write_verdicts(state.get("verdicts", []))
     meta = store.write_run_meta(
-        config=_config_echo(spec, config, consolidate_enabled),
+        config=_config_echo(spec, config, consolidate_enabled, filters),
         counts={
             "operations_scanned": len(operations),
             "detections": len(final_findings),
@@ -264,7 +281,8 @@ def run_scan(
     return meta
 
 
-def _config_echo(spec: LoadedSpec, config: HermesConfig, consolidate_enabled: bool) -> dict:
+def _config_echo(spec: LoadedSpec, config: HermesConfig, consolidate_enabled: bool,
+                 filters: dict | None = None) -> dict:
     """What run.json records about the run's configuration. NEVER include
     credentials or raw environment (docs/03-DEPLOYMENT secrets policy)."""
     return {
@@ -275,6 +293,7 @@ def _config_echo(spec: LoadedSpec, config: HermesConfig, consolidate_enabled: bo
         "concurrency": config.concurrency,
         "seed": config.seed,
         "consolidate": consolidate_enabled,
+        "filters": filters or {},
     }
 
 

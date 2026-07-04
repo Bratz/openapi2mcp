@@ -127,3 +127,78 @@ def test_budget_exceeded_raises(golden_spec, env):
 
     with pytest.raises(BudgetExceeded):
         run_scan(spec=golden_spec, llm=CostlyLLM(), cache=cache, config=config, store=store)
+
+
+# ---------- ultra review regressions ----------
+
+
+def test_consolidation_failure_spend_counts_toward_budget(golden_spec, env):
+    """Ultra review B2: a failed consolidation's estimated spend must trip
+    HERMES_MAX_COST_USD exactly like a failed detection's."""
+    from hermes.graph import BudgetExceeded
+    from hermes.llm import DetectorFailure
+    from hermes.schemas.models import UsageRecord
+
+    config, cache, store = env
+    config.max_cost_usd = 0.5
+
+    class FailingConsolidator(FakeLLM):
+        def consolidate(self, endpoint_summary, findings_json):
+            raise DetectorFailure("boom", usage=UsageRecord(model="fake", cost_usd=1.0, estimated=True))
+
+    llm = FailingConsolidator({
+        ("createRefund", "LAZY"): detected("LAZY"),
+        ("createRefund", "SECURITY"): detected("SECURITY"),
+    })
+    with pytest.raises(BudgetExceeded):
+        run_scan(spec=golden_spec, llm=llm, cache=cache, config=config, store=store)
+
+
+def test_reducer_failure_isolated_to_operation(golden_spec, env, monkeypatch):
+    """Ultra review R5: one hostile operation gets a _reducer error record;
+    the other 39 still scan, and it gets no spurious clean verdict."""
+    import hermes.graph as graph_mod
+
+    config, cache, store = env
+    real = graph_mod.reduce_operation
+
+    def flaky(spec, op):
+        if op.operation_id == "getAccountBalance":
+            raise ValueError("hostile operation")
+        return real(spec, op)
+
+    monkeypatch.setattr(graph_mod, "reduce_operation", flaky)
+    meta = run_scan(spec=golden_spec, llm=FakeLLM(), cache=cache, config=config, store=store)
+    assert meta["status"] == "completed"
+    reducer_errors = [e for e in meta["detector_errors"] if e["smell_id"] == "_reducer"]
+    assert [e["endpoint_key"] for e in reducer_errors] == ["GET /accounts/{accountId}/balance"]
+    assert len(store.load_verdicts()) == 39
+
+
+def test_run_json_echoes_filters(golden_spec, env):
+    """Ultra review C4: run.json records the endpoint filters so a --resume
+    with a different scope is detectable."""
+    config, cache, store = env
+    meta = run_scan(spec=golden_spec, llm=FakeLLM(), cache=cache, config=config, store=store,
+                    tags=["Accounts"])
+    assert meta["config"]["filters"] == {
+        "tags": ["Accounts"], "paths": None, "sample": None, "max_endpoints": None,
+    }
+
+
+def test_consolidation_replays_from_cache(golden_spec, env):
+    """Ultra review F7.3: a re-run with identical findings replays the cached
+    ConsolidationResponse (validated as the right model) instead of re-paying."""
+    config, cache, store = env
+    responses = {
+        ("createRefund", "LAZY"): detected("LAZY"),
+        ("createRefund", "SECURITY"): detected("SECURITY"),
+    }
+    first = FakeLLM(responses)
+    run_scan(spec=golden_spec, llm=first, cache=cache, config=config, store=store)
+    assert first.consolidations == 1
+    second = FakeLLM(responses)
+    meta = run_scan(spec=golden_spec, llm=second, cache=cache, config=config, store=store)
+    assert second.consolidations == 0  # replayed from cache
+    assert len(second.calls) == 0  # detections replayed too
+    assert meta["counts"]["detections"] == 2

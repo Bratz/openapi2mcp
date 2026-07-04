@@ -33,6 +33,10 @@ from hermes.config import HermesConfig, call_cost_usd
 from hermes.schemas.models import AgentResponse, ConsolidationResponse, UsageRecord
 from hermes.smells.prompts import assemble_messages
 
+# Bump when CONSOLIDATOR_SYSTEM changes — it is part of the consolidation
+# cache key (graph.py), exactly like PROMPT_VERSIONS for detection prompts.
+CONSOLIDATOR_PROMPT_VERSION = "consolidator-v1"
+
 CONSOLIDATOR_SYSTEM = """\
 You are the central Smell Detector coordinator consolidating per-smell findings for ONE
 API endpoint into a coherent diagnostic report.
@@ -137,6 +141,9 @@ class AnthropicLLM:
     def _call(self, model, max_tokens, system, messages, output_format):
         self._wait_if_throttled()
         with self._semaphore:
+            # Re-check inside the slot: a 429 may have extended the deadline
+            # while this thread was blocked acquiring the semaphore.
+            self._wait_if_throttled()
             try:
                 response = self._client.messages.parse(
                     model=model,
@@ -167,9 +174,11 @@ class AnthropicLLM:
         parsed = response.parsed_output
         if parsed is None:
             # Refusal or text-block-free response: parse() returns None without
-            # raising (verified against anthropic 0.116).
+            # raising (verified against anthropic 0.116). The call was billed —
+            # attach the real usage so the budget meter and rollup stay honest.
             raise DetectorFailure(
-                f"model returned no parseable output (stop_reason={getattr(response, 'stop_reason', '?')})"
+                f"model returned no parseable output (stop_reason={getattr(response, 'stop_reason', '?')})",
+                usage=record,
             )
         if isinstance(parsed, dict):  # tolerate fakes returning plain dicts
             parsed = output_format.model_validate(parsed)

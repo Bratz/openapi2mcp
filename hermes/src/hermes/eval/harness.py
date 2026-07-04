@@ -72,9 +72,13 @@ def run_detections(cases: list[EvalCase], llm: LLM) -> tuple[dict[str, set[str]]
 
 
 class ReplayLLM:
-    """Offline LLM replaying recorded responses; fails loudly on staleness."""
+    """Offline LLM replaying recorded responses; fails loudly on staleness.
 
-    def __init__(self, recordings_path: Path = RECORDINGS):
+    Staleness checks: per-record prompt_version vs PROMPT_VERSIONS, unknown
+    smell ids (taxonomy changed since recording), and — when both sides are
+    known — the recorded detect model vs `expected_detect_model`."""
+
+    def __init__(self, recordings_path: Path = RECORDINGS, expected_detect_model: str | None = None):
         if not recordings_path.exists():
             raise FileNotFoundError(
                 f"no recordings at {recordings_path} — run `hermes eval --live` first to record"
@@ -88,6 +92,11 @@ class ReplayLLM:
             if record.get("_meta"):
                 meta_model = record.get("detect_model")
                 continue
+            if record["smell_id"] not in PROMPT_VERSIONS:
+                raise StaleRecordingsError(
+                    f"recordings stale: unknown smell {record['smell_id']!r} (taxonomy changed) — "
+                    "run `hermes eval --live` to re-record"
+                )
             if record["prompt_version"] != PROMPT_VERSIONS[record["smell_id"]]:
                 raise StaleRecordingsError(
                     f"recordings stale: {record['smell_id']} recorded at "
@@ -96,6 +105,11 @@ class ReplayLLM:
                 )
             self._by_key[(record["operation_id"], record["smell_id"])] = AgentResponse.model_validate(
                 record["response"]
+            )
+        if expected_detect_model and meta_model and meta_model != expected_detect_model:
+            raise StaleRecordingsError(
+                f"recordings stale: recorded with detect model {meta_model!r}, current config is "
+                f"{expected_detect_model!r} — run `hermes eval --live` to re-record"
             )
         self.detect_model = meta_model
 
@@ -107,8 +121,8 @@ class StaleRecordingsError(Exception):
     pass
 
 
-def run_offline_eval() -> dict:
-    replay = ReplayLLM()
+def run_offline_eval(expected_detect_model: str | None = None) -> dict:
+    replay = ReplayLLM(expected_detect_model=expected_detect_model)
     cases, gold = load_cases()
     predicted: dict[str, set[str]] = {op: set() for op in gold}
     missing = 0
@@ -150,11 +164,17 @@ def run_live_eval(llm: LLM, *, detect_model: str, record_to: Path = RECORDINGS) 
         retry_cases = [c for c in cases if c.smell_id in suspect]
         retry_predicted, retry_records, retry_errors = run_detections(retry_cases, llm)
         errors.extend(retry_errors)
+        # Keys where the retry call itself FAILED keep the base run's
+        # prediction (and, below, its record) — otherwise a retry API flake
+        # would be scored as a confident negative while the base record
+        # (possibly smell_detected=true) is written to the baseline, making
+        # the reported metrics irreproducible from the recordings.
+        retry_failed = {(e["operation_id"], e["smell_id"]) for e in retry_errors}
         # Keep the better run per smell (higher per-smell F1). Records merge
         # per (op, smell) KEY: retry replaces only keys it actually produced,
         # so a DetectorFailure in the retry cannot punch holes in recordings.
         for smell_id in suspect:
-            candidate = _swap_smell(predicted, retry_predicted, smell_id, gold)
+            candidate = _swap_smell(predicted, retry_predicted, smell_id, gold, retry_failed)
             if candidate is not None:
                 predicted = candidate
                 retry_by_key = {(r["operation_id"], r["smell_id"]): r for r in retry_records
@@ -192,14 +212,23 @@ def run_live_eval(llm: LLM, *, detect_model: str, record_to: Path = RECORDINGS) 
 
 
 def _swap_smell(base: dict[str, set[str]], retry: dict[str, set[str]], smell_id: str,
-                gold: dict[str, set[str]]) -> dict[str, set[str]] | None:
+                gold: dict[str, set[str]], retry_failed: set[tuple[str, str]] = frozenset(),
+                ) -> dict[str, set[str]] | None:
     """Return base with smell_id's predictions replaced by retry's, iff that
-    improves the smell's F1; None if the original was at least as good."""
+    improves the smell's F1; None if the original was at least as good.
+
+    Keys in `retry_failed` (retry call raised) keep the BASE prediction —
+    absence of a failed key from `retry` is missing data, not a negative."""
     def f1_for(pred: dict[str, set[str]]) -> float:
         return compute_metrics(pred, gold).per_smell[smell_id].f1
 
+    def detected(op: str) -> bool:
+        if (op, smell_id) in retry_failed:
+            return smell_id in base[op]
+        return smell_id in retry.get(op, set())
+
     swapped = {
-        op: ({s for s in labels if s != smell_id} | ({smell_id} if smell_id in retry.get(op, set()) else set()))
+        op: ({s for s in labels if s != smell_id} | ({smell_id} if detected(op) else set()))
         for op, labels in base.items()
     }
     return swapped if f1_for(swapped) > f1_for(base) else None

@@ -24,7 +24,8 @@ Precedence: CLI flag > environment variable > default.
 | `HERMES_DETECT_MODEL` | `claude-haiku-4-5` | per-smell detection agents |
 | `HERMES_CONSOLIDATE_MODEL` | `claude-sonnet-5` | per-endpoint consolidator |
 | `HERMES_CONCURRENCY` | `8` | max concurrent LLM calls |
-| `HERMES_CACHE_DB` | `runs/cache.db` | content-hash cache location |
+| `HERMES_CACHE_DB` | `<out>/cache.db` | content-hash cache location |
+| `HERMES_OUT` | `runs/` | output directory for run artifacts (also honored by `hermes eval --report`); the cache default follows it |
 | `HERMES_MAX_COST_USD` | unset | hard abort threshold; scan stops (resumable, exit 3) when rolled-up cost exceeds it |
 
 Secrets policy: the API key is read from env only; never written to run.json, logs, or reports. Add a unit test greping run artifacts for `sk-ant`.
@@ -54,7 +55,7 @@ hermes eval --live      # golden-fixture gates after any prompt change
 
 | Item | Basis | Ballpark (full BaNCS scan) |
 |---|---|---|
-| Detection | 927 ops × 9 smell agents (5 documentation + 4 REST, per 00-SPEC §3), Haiku 4.5 ($1/$5 per MTok), ~1.5k in / 400 out per call, system prompts cache-read after first hit per smell | ~$12–25 |
+| Detection | 927 ops × 9 smell agents (5 documentation + 4 REST, per 00-SPEC §3), Haiku 4.5 ($1/$5 per MTok), ~1.5k in / 400 out per call, no prompt-cache savings (detect prompts are below Haiku's 4096-token cacheable minimum — DECISIONS M4) | ~$12–25 |
 | Consolidation | ~60% of ops, Sonnet 5 ($3/$15 per MTok), ~1.2k in / 300 out | ~$3–6 |
 | Re-scan after prompt change to ONE smell | only that smell's 927 calls re-run (cache) | ~$2–3 |
 | Live eval | 46 ops × 9 + consolidation, Haiku | ~$0.50 |

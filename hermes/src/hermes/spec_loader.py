@@ -56,8 +56,10 @@ def load_spec(path: str | Path) -> LoadedSpec:
             raw = json.loads(text)
         else:
             raw = yaml.safe_load(text)
-    except (json.JSONDecodeError, yaml.YAMLError, UnicodeDecodeError) as exc:
-        raise SpecError(f"could not parse {path.name}: {exc}") from exc
+    except (json.JSONDecodeError, yaml.YAMLError, UnicodeDecodeError, RecursionError) as exc:
+        # RecursionError: pathologically nested input must map to the SpecError
+        # exit-2 contract, not a bare traceback.
+        raise SpecError(f"could not parse {path.name}: {exc.__class__.__name__}: {exc}") from exc
 
     if not isinstance(raw, dict):
         raise SpecError(f"{path.name} is not an OpenAPI document (top level is not an object)")

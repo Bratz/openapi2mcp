@@ -1,5 +1,6 @@
 """M5 CLI integration: estimate output, scan confirmation gate (docs/02-TEST-PLAN §4)."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -8,8 +9,14 @@ GOLDEN = Path(__file__).parent.parent / "fixtures" / "golden" / "seeded_spec.yam
 
 
 def _run(argv, **kwargs):
+    # Subprocesses escape the conftest no-real-client guard, so never hand them
+    # real credentials: strip ANTHROPIC_*/HERMES_* and plant a canary key.
+    env = kwargs.pop("env", None) or {
+        k: v for k, v in os.environ.items() if not k.startswith(("ANTHROPIC_", "HERMES_"))
+    }
+    env.setdefault("ANTHROPIC_API_KEY", "sk-ant-test-canary-never-usable")
     return subprocess.run(
-        [sys.executable, "-m", "hermes.cli", *argv], capture_output=True, text=True, **kwargs
+        [sys.executable, "-m", "hermes.cli", *argv], capture_output=True, text=True, env=env, **kwargs
     )
 
 
@@ -121,3 +128,24 @@ def test_offline_eval_missing_recordings_exits_2(tmp_path, monkeypatch):
 
     monkeypatch.setattr(harness, "RECORDINGS", tmp_path / "none.jsonl")
     assert main(["eval"]) == 2
+
+
+def test_report_warns_when_run_not_completed(tmp_path):
+    """Ultra review C3: interrupted re-runs rewrite only run.json, so the
+    report command must flag potentially-stale artifacts."""
+    import contextlib
+    import io
+
+    from hermes.cli import main
+    from hermes.store import RunStore
+
+    store = RunStore(tmp_path, "r_int")
+    store.write_findings([])
+    store.write_verdicts([])
+    store.write_run_meta(config={"spec_title": "X"}, counts={"operations_scanned": 0},
+                         usage=[], errors=[], status="interrupted")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        rc = main(["report", "--run", str(tmp_path / "r_int")])
+    assert rc == 0
+    assert "stale" in err.getvalue()

@@ -137,6 +137,7 @@ def render_endpoint_md(store: RunStore, endpoint_key: str) -> str:
 
 
 def _embed(payload) -> Markup:
-    # Markup: autoescape must not HTML-entity the JSON inside the script block;
-    # the "</" replacement is the actual safety measure (script-breakout XSS).
-    return Markup(json.dumps(payload).replace("</", "<\\/"))
+    # Markup: autoescape must not HTML-entity the JSON inside the script block.
+    # Every "<" becomes < (still valid JSON): blocks both the </script>
+    # breakout AND the "<!--<script " double-escaped-state DoS (ultra review).
+    return Markup(json.dumps(payload).replace("<", "\\u003c"))

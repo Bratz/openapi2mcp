@@ -39,6 +39,6 @@ python -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 pytest tests/unit -q            # fast, no network — must always pass
 pytest tests/integration -q     # mocked-LLM graph tests — must always pass
-hermes eval                     # offline eval against recorded responses
-hermes eval --live              # live-LLM eval vs golden fixtures (costs ~$0.50)
+hermes eval                     # offline eval against recorded responses (exits 2 until a green --live run has recorded them)
+hermes eval --live              # live-LLM eval vs golden fixtures (costs ~$0.50; needs ANTHROPIC_API_KEY)
 ```

@@ -63,6 +63,7 @@ class RunStore:
             "input_tokens": sum(u.input_tokens for u in usage),
             "output_tokens": sum(u.output_tokens for u in usage),
             "cache_read_input_tokens": sum(u.cache_read_input_tokens for u in usage),
+            "cache_creation_input_tokens": sum(u.cache_creation_input_tokens for u in usage),
             "cost_usd": round(sum(u.cost_usd for u in usage), 4),
             "cost_includes_estimates": any(u.estimated for u in usage),
         }

@@ -47,7 +47,7 @@ One record per (operation, smell) **detection** (non-detections are recorded in 
 
 ```json
 {
-  "id": "f_<sha1 of endpoint_key + smell>",
+  "id": "f_<first 16 hex chars of sha1('<endpoint_key>|<smell>')>",
   "run_id": "r_20260704T120000Z",
   "api_title": "TCS BaNCS RestFul API Documentation",
   "endpoint": {
@@ -84,13 +84,14 @@ Rules:
 
 ## 5. Reduced endpoint representation (ERD)
 
-All agents for a given operation receive the **same** reduced representation (paper §3.5 / Appendix B): method, path, summary, description, parameters, request body, responses, referenced schemas, and security definitions — nothing else from the document.
+All agents for a given operation receive the **same** reduced representation (paper §3.5 / Appendix B): method, path, summary, description, parameters, request body, responses, referenced schemas, and security definitions — nothing else from the document, except the engineering additions below.
 
-Engineering additions (ours, for scale):
+Engineering additions (ours, for scale and context):
+- Document-level context: `api_title`, `info.description` (capped at 1,500 chars), and the descriptions of the operation's tags; operation metadata (`operationId`, `deprecated`, `consumes`/`produces`) retained. Smells like SECURITY/RESPONSE need document-level conventions to judge an operation fairly. (Deviation from a strict Appendix-B reading; DECISIONS M2.)
 - Local `$ref`s inlined, depth-capped at 4 levels; deeper schemas replaced by `{"$truncated": "<schema name>"}`; **unresolvable refs replaced by `{"$unresolved": "<ref>"}`** (FRAGMENTED evidence, never a crash).
 - Sibling context for PATH_AND_METHOD: other methods on the same path (names only) + up to 10 sibling path strings sharing the first path segment.
 - Spec-level security context: `securityDefinitions`/`components.securitySchemes` names + types (needed by SECURITY).
-- Serialized as YAML, deterministic key order. Hard cap 6,000 tokens (chars/3.5 heuristic); over-cap ERDs get schema bodies progressively truncated (deepest first) with `truncation_applied: true` copied into any resulting record's `detector` block.
+- Serialized as YAML, deterministic key order. Cap 6,000 tokens (chars/3.5 heuristic); over-cap ERDs get schema bodies progressively truncated (deepest first) with `truncation_applied: true` copied into any resulting record's `detector` block. The cap is best-effort: when no `properties`/`enum` collapse candidates remain, an ERD may exceed it (still flagged; accepted residual risk, DECISIONS M2).
 
 ## 6. CLI contract
 
@@ -111,7 +112,7 @@ hermes estimate --spec PATH [filters]                  # endpoint/call counts + 
 Behavior requirements:
 - `scan` prints an upfront estimate (endpoints, LLM calls = ops × 9 + consolidations, approximate cost) and requires `--yes` or interactive confirmation before spending money.
 - `scan` writes `runs/<run_id>/findings.jsonl`, `endpoints.jsonl` (per-endpoint smell-set + verdict), `run.json` (config, counts, token usage, cost), `report.html`.
-- `--resume` continues an interrupted run via the content-hash cache (01-ARCHITECTURE §4).
+- `--resume` continues an interrupted run via the content-hash cache (01-ARCHITECTURE §4). It requires an explicit `--run-id` (exit 2 otherwise; DECISIONS M5), and the caller must repeat the original run's filter flags — filters are echoed in `run.json` but not re-applied automatically.
 - Exit codes: 0 success; 2 invalid invocation or spec parse failure (argparse usage errors share this code); 3 interrupted (resumable); 4 budget/confirmation declined.
 
 ## 7. Reports

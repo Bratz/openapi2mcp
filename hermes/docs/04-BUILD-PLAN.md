@@ -41,7 +41,7 @@ hermes inspect --spec ../api-docs.json --endpoint "GET /accountManagement/accoun
 
 ## M3 — Smell catalog & prompts
 
-**Build:** `smells/catalog.py` (the 9 paper-actual smells: LAZY, BLOATED, TANGLED, FRAGMENTED, EXCESS_STRUCTURED, PATH_AND_METHOD, INPUT, RESPONSE, SECURITY — spec §3), `smells/prompts/<smell>.py` each with the **Appendix-A template structure** (role → definition → "typically occurs when" examples → task → classification rules incl. the smell's scoping rule → explanation/improvement rules with the `[SMELL] - [action title]` contract; source: 05-PAPER-FACTS §5), `occurs_when` examples (≥2), `PROMPT_VERSION="<smell>-v1"`; prompt-assembly function returning the exact messages payload; snapshot tests of assembled prompts (so accidental prompt drift is visible in diffs).
+**Build:** `smells/catalog.py` (the 9 paper-actual smells: LAZY, BLOATED, TANGLED, FRAGMENTED, EXCESS_STRUCTURED, PATH_AND_METHOD, INPUT, RESPONSE, SECURITY — spec §3), `smells/prompts/__init__.py` — a single generic assembler over the catalog (per-smell modules dropped; DECISIONS M3) following the **Appendix-A template structure** (role → definition → "typically occurs when" examples → task → classification rules incl. the smell's scoping rule → explanation/improvement rules with the `[SMELL] - [action title]` contract; source: 05-PAPER-FACTS §5), `occurs_when` examples (≥2), `PROMPT_VERSION="<smell>-v1"`; prompt-assembly function returning the exact messages payload; snapshot tests of assembled prompts (so accidental prompt drift is visible in diffs).
 
 **Accept:**
 ```bash
@@ -55,7 +55,7 @@ pytest tests/unit/test_smells.py -q
 
 **Accept:**
 ```bash
-pytest tests/unit/test_llm.py tests/unit/test_schemas.py -q
+pytest tests/unit/test_llm.py -q   # schemas tests live here too (no separate test_schemas.py)
 ```
 **Guard:** `anthropic` imported only inside `llm.py`; unit suite passes with `ANTHROPIC_API_KEY` unset.
 

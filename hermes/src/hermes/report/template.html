@@ -141,7 +141,7 @@ function render() {
     const tr = document.createElement('tr');
     const key = f.endpoint.method + ' ' + f.endpoint.path;
     tr.innerHTML = `<td>${esc(f.endpoint.method)}</td><td>${esc(f.endpoint.path)}</td>` +
-      `<td>${esc(f.smell)}</td><td class="sev-${f.extensions.severity}">${esc(f.extensions.severity)}</td>` +
+      `<td>${esc(f.smell)}</td><td class="sev-${esc(f.extensions.severity)}">${esc(f.extensions.severity)}</td>` +
       `<td>${f.extensions.confidence.toFixed(2)}</td><td>${esc(f.justification[0] || '')}</td>`;
     tr.style.cursor = 'pointer';
     tr.onclick = () => {

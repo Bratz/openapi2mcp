@@ -48,36 +48,40 @@ One `StateGraph` per scan run.
 ### State (TypedDict)
 
 ```python
-class ScanState(TypedDict):
-    config: HermesConfig
-    spec_path: str
-    operations: list[OperationRef]        # after load
-    erds: dict[str, str]                  # endpoint_key -> ERD yaml (or on-disk paths for big runs)
-    pending: list[tuple[str, str]]        # (endpoint_key, smell_id) not yet detected
-    findings: Annotated[list[Finding], operator.add]
-    verdicts: Annotated[list[EndpointVerdict], operator.add]
-    usage: Annotated[list[UsageRecord], operator.add]   # per-call tokens+cost
+class ScanState(TypedDict, total=False):        # graph.py — nodes bind config/llm/cache by closure (DECISIONS M5)
+    run_id: str
+    api_title: str
+    operations: list[dict]                      # OperationRef dumps: path/method/operation_id/tags
+    erds: dict[str, dict]                       # endpoint_key -> {yaml, truncation_applied}
+    tasks: list[dict]                           # cache misses to detect: {endpoint_key, smell_id}
+    findings: Annotated[list, operator.add]
+    raw: Annotated[list, operator.add]
+    usage: Annotated[list, operator.add]        # per-call tokens+cost
+    errors: Annotated[list, operator.add]
+    verdicts: Annotated[list, operator.add]
+    final_findings: list                        # post-consolidation set; written once by collect
 ```
 
 ### Nodes and edges
 
 ```
-load_spec ──> reduce ──> plan ──(Send fan-out)──> detect ──> collect ──> consolidate ──> persist ──> render
+reduce ──> plan ──(Send fan-out)──> detect ──> collect
 ```
 
-- `load_spec`: parse spec, enumerate operations, apply `--tags/--paths/--sample` filters.
+Spec loading/filtering happens in `run_scan` *before* the graph is invoked; persistence happens in `run_scan` after `invoke` returns; rendering lives in `commands.py`. Only the four nodes above are graph nodes.
+
+- (before the graph) `run_scan`: parse spec, enumerate operations, apply `--tags/--paths/--sample` filters, then invoke.
 - `reduce`: build ERD per operation (pure, deterministic — unit-testable without LLM). Unresolvable refs become `$unresolved` markers (FRAGMENTED evidence), never exceptions.
 - `plan`: cross-product operations × 9 smells, minus cache hits (cache hits emit their stored results directly into state).
 - `detect`: **map node via LangGraph `Send`** — one task per (endpoint, smell). Executes the smell agent (§4), validates output, writes to cache. Concurrency bounded by a semaphore in `llm.py` (default 8), so rate limits are respected regardless of fan-out size.
-- `collect`: group detections per endpoint (this is the code half of the paper's "central Smell Detector Agent consolidates results" — it assembles the unified per-endpoint diagnostic report).
-- `consolidate` (extension, `--no-consolidate` to skip): per endpoint with ≥2 detections, one Sonnet call to normalize justifications and produce the endpoint verdict. Endpoints with 0–1 detections get a rule-based verdict.
-- `persist`: append to `findings.jsonl` / `endpoints.jsonl` (idempotent by id), write `run.json` with usage/cost rollup.
-- `render`: `report/render.py` → `report.html`.
+- `collect`: group detections per endpoint (this is the code half of the paper's "central Smell Detector Agent consolidates results" — it assembles the unified per-endpoint diagnostic report). Consolidation (extension, `--no-consolidate` to skip) runs *inside* this node: per endpoint with ≥2 detections, one Sonnet call to normalize and produce the endpoint verdict; endpoints with 0–1 detections get a rule-based verdict.
+- (after the graph) `run_scan` persists: findings.jsonl / endpoints.jsonl / findings.raw.jsonl are **rewritten wholesale** per completed run so all artifacts stay mutually consistent (DECISIONS M5), plus `run.json` with usage/cost rollup.
+- `commands._render_report`: `report/render.py` → `report.html`.
 
-### Checkpointing / resume
+### Resume
 
-- `langgraph.checkpoint.sqlite.SqliteSaver` at `runs/<run_id>/checkpoint.db`, `thread_id = run_id`.
-- `--resume` re-invokes with the same `thread_id`; the content-hash cache is the primary resume mechanism, the checkpointer is belt-and-suspenders. If SqliteSaver fights the Send API, drop it and rely on cache-only resume — record in DECISIONS.md.
+- No LangGraph checkpointer — the content-hash cache is the sole resume mechanism (SqliteSaver dropped per the fallback anticipated here; recorded in DECISIONS M5).
+- `hermes scan --resume --run-id <id>` re-runs the same scan; cache hits replay for free. `--resume` requires an explicit `--run-id` (DECISIONS M5).
 
 ## 4. Smell agent (detect node internals)
 
@@ -112,8 +116,8 @@ class AgentResponse(BaseModel):
 ```
 
 - `max_tokens`: 2000. Omit sampling params.
-- **Retry policy:** SDK default retries for 429/5xx; one application-level retry on schema-validation failure with the validation error appended. Then record `detector_error` in `run.json` and continue — never abort the scan for one endpoint.
-- Post-validation in code: clamp confidence to [0,1]; enforce/repair the `[<SMELL>] - ` action-title prefix; enforce ≥120-char justification total (below threshold → one retry, then accept with `short_justification: true` flag); compute deterministic `id`; stamp `detector` metadata.
+- **Retry policy:** SDK default retries for 429/5xx; one application-level retry on schema-validation failure — a clean resend with doubled `max_tokens`, nothing appended (structured outputs constrain the reply, so echoing the validation error adds nothing; DECISIONS M4). Then record `detector_error` in `run.json` and continue — never abort the scan for one endpoint.
+- Post-validation in code: clamp confidence to [0,1]; enforce/repair the `[<SMELL>] - ` action-title prefix; ≥120-char justification total below threshold → accept with `short_justification: true` flag (no retry — matches 02-TEST-PLAN); compute deterministic `id`; stamp `detector` metadata.
 
 ### Consolidator agent (extension)
 
@@ -138,14 +142,14 @@ key = sha256(erd_yaml + smell_id + PROMPT_VERSION[smell] + model_id)
 
 ## 6. Cost & rate control
 
-- `hermes estimate` and the pre-scan confirmation compute: `calls = |operations| × 9 + est. consolidations`; input ≈ ERD tokens + cache-read system prompt; output ≈ 400/call. Full 927-operation BaNCS scan ≈ 8.4k calls, order of **$15–30** with Haiku 4.5 ($1/$5 per MTok) + prompt caching; print the computed number, not this constant.
+- `hermes estimate` and the pre-scan confirmation compute: `calls = |operations| × 9 + est. consolidations`; input ≈ ERD tokens + full system prompt (no cache savings assumed — the ~700-token detect prompts sit below Haiku's 4096-token cacheable minimum, so `cache_control` is a no-op; DECISIONS M4); output ≈ 400/call. Full 927-operation BaNCS scan ≈ 8.4k calls, order of **$15–30** with Haiku 4.5 ($1/$5 per MTok); print the computed number, not this constant.
 - Semaphore concurrency 8 default; on `RateLimitError` the whole pool pauses ~60s before taking new slots (simple full-pause backoff; SDK per-call retries still apply — see DECISIONS M4).
 - `--max-endpoints`, `--sample N --seed S` (stratified by tag when possible) for cheap partial scans.
 - Usage accounting: every call appends `UsageRecord(model, input_tokens, output_tokens, cache_read_input_tokens, cost_usd)` from `response.usage`; `run.json` carries the rollup. Price table (Haiku $1/$5, Sonnet $3/$15 per MTok) lives in `config.py` with a drift comment.
 
 ## 7. Report rendering
 
-- Pure function: `render(run_dir) -> report.html`; `render_endpoint_md(run_dir, endpoint_key) -> str` for the Appendix-C markdown format (spec §7.1). Jinja2 template, findings embedded as JSON, vanilla JS filter/sort/paginate (page size 100). No network fetches — test greps output for `http(s)://` in src/href (none allowed except inside finding text).
+- Pure functions over a `RunStore`: `render_run(store) -> str` (the dashboard HTML) and `render_endpoint_md(store, endpoint_key) -> str` for the Appendix-C markdown format (spec §7.1). Jinja2 template, findings embedded as JSON, vanilla JS filter/sort/paginate (page size 100). No network fetches — test greps output for `http(s)://` in src/href (none allowed except inside finding text).
 
 ## 8. Error handling philosophy
 

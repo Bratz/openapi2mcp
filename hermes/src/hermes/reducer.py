@@ -22,6 +22,10 @@ import yaml
 from hermes.spec_loader import LoadedSpec, OperationRef
 
 MAX_INLINE_DEPTH = 4
+# Hostile-input guard: total structural recursion depth (plain inline nesting,
+# no $refs needed) — far above anything a real spec produces, far below
+# Python's recursion limit. Deeper nodes collapse to $truncated markers.
+MAX_STRUCTURAL_DEPTH = 60
 MAX_ERD_TOKENS = 6000
 CHARS_PER_TOKEN = 3.5
 MAX_API_DESCRIPTION_CHARS = 1500
@@ -57,17 +61,21 @@ class _Resolver:
         self.root = root
         self.max_depth = max_depth
 
-    def resolve(self, node, depth: int = 0, active: tuple[str, ...] = ()):
+    def resolve(self, node, depth: int = 0, active: tuple[str, ...] = (), spine: int = 0):
         if isinstance(node, dict):
+            if spine >= MAX_STRUCTURAL_DEPTH:  # unbounded inline nesting, no $ref needed
+                return {"$truncated": "max nesting depth"}
             ref = node.get("$ref")
             if isinstance(ref, str):
-                return self._resolve_ref(ref, depth, active)
-            return {k: self.resolve(v, depth, active) for k, v in node.items()}
+                return self._resolve_ref(ref, depth, active, spine)
+            return {k: self.resolve(v, depth, active, spine + 1) for k, v in node.items()}
         if isinstance(node, list):
-            return [self.resolve(v, depth, active) for v in node]
+            if spine >= MAX_STRUCTURAL_DEPTH:
+                return ["$truncated: max nesting depth"]
+            return [self.resolve(v, depth, active, spine + 1) for v in node]
         return node
 
-    def _resolve_ref(self, ref: str, depth: int, active: tuple[str, ...]):
+    def _resolve_ref(self, ref: str, depth: int, active: tuple[str, ...], spine: int = 0):
         name = ref.rsplit("/", 1)[-1]
         if not ref.startswith("#/"):
             return {"$unresolved": ref}
@@ -82,7 +90,7 @@ class _Resolver:
                 target = target[part]
             else:
                 return {"$unresolved": ref}
-        return self.resolve(target, depth + 1, active + (ref,))
+        return self.resolve(target, depth + 1, active + (ref,), spine + 1)
 
 
 def reduce_operation(spec: LoadedSpec, op: OperationRef) -> ERD:
@@ -175,17 +183,22 @@ def _context(spec: LoadedSpec, op: OperationRef, path_item: dict) -> dict:
     if isinstance(api_description, str) and len(api_description) > MAX_API_DESCRIPTION_CHARS:
         api_description = api_description[:MAX_API_DESCRIPTION_CHARS]
 
+    raw_tags = raw.get("tags")
+    if not isinstance(raw_tags, list):  # truthy non-list tags must not crash the scan
+        raw_tags = []
     tag_descriptions = {
         t["name"]: t["description"][:MAX_TAG_DESCRIPTION_CHARS]
-        for t in raw.get("tags", []) or []
+        for t in raw_tags
         if isinstance(t, dict) and t.get("name") in op.tags and isinstance(t.get("description"), str)
     }
 
     if spec.version == "swagger2":
-        schemes = raw.get("securityDefinitions") or {}
+        schemes = raw.get("securityDefinitions")
     else:
         components = raw.get("components") if isinstance(raw.get("components"), dict) else {}
-        schemes = components.get("securitySchemes") or {}
+        schemes = components.get("securitySchemes")
+    if not isinstance(schemes, dict):  # truthy non-dict must not crash the scan
+        schemes = {}
     security_schemes = {
         name: str(defn.get("type", "?")) for name, defn in schemes.items() if isinstance(defn, dict)
     }
