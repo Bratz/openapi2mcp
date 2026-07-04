@@ -1,0 +1,282 @@
+# POST /accountManagement/account
+endpoint:
+  method: POST
+  path: /accountManagement/account
+  operation_id: AMBT2020CreateAcntActvUsingPOST
+  tags:
+  - AccountManagement
+operation:
+  operationId: AMBT2020CreateAcntActvUsingPOST
+  summary: Create Account
+  description: This API is used to Create Account
+  deprecated: false
+  parameters:
+  - name: Accesstoken
+    in: header
+    description: Authorization token for identification of the caller
+    required: false
+    type: string
+  - name: ChannelType
+    in: header
+    description: Channel identifier from where the TXN has originated (Internet, Mobile, ATM, Branch Channel
+      )
+    required: false
+    type: integer
+    format: int32
+  - name: Co-Relationid
+    in: header
+    description: Unique ID for the service invoked, will be set by the TXN system
+    required: false
+    type: integer
+    format: int32
+  - name: InitiatingSystem
+    in: header
+    description: Indicating the initiated system
+    required: false
+    type: string
+  - name: ServiceMode
+    in: header
+    description: Used for branch channel to indicate the type of customer
+    required: false
+    type: integer
+    format: int32
+  - name: UUIDSeqNo
+    in: header
+    description: UUID Sequence Number
+    required: false
+    type: integer
+    format: int32
+  - name: entity
+    in: header
+    description: entity
+    required: true
+    type: string
+  - in: body
+    name: input
+    description: input
+    required: true
+    schema:
+      type: object
+      required:
+      - account
+      properties:
+        account:
+          type: object
+          required:
+          - accountCurrency
+          - accountLanguage
+          - accountType
+          - accountUsage
+          - branchId
+          - customerId
+          - product
+          properties:
+            customerId:
+              type: integer
+              format: int32
+              description: 'Customer reference for which Account Opening being done. Allowed Length: Number(9)'
+            accountLanguage:
+              type: integer
+              format: int32
+              description: 'Language preferance of the Account (Domain Name: d_LanguageCode) Eg : 1 -
+                English, 2 - French, 3 - Arabic'
+            accountUsage:
+              type: integer
+              format: int32
+              description: 'Usage of the Account (Domain Name: d_AccUsage) Eg : 1 - General, 7 - Nostro,
+                40 - Savings, 48 - Current, 100 - Joint, 101 - Group, 102 - Minor'
+            accountCurrency:
+              type: string
+              description: 'Currency code for the Account (Domain Name: d_CurrCode / 3 character ISO currency
+                code) Eg : MXN, EUR, USD, INR'
+            faClassification:
+              type: integer
+              format: int32
+              example: -999
+              description: 'FA Classification : 1 - Assest, 2 - Liability (Mandatory for Nostro Account)'
+            accountType:
+              type: integer
+              format: int32
+              description: 'Type of the Account (Domain Name: d_PosTyp) Eg : 1 - Cash, 4370 - Virtual'
+            accountName:
+              type: string
+              description: 'Name of the Account. Allowed Length: String(140)'
+            branchId:
+              type: string
+              description: 'Branch to which the account belongs. Allowed Length: String(16)'
+            product:
+              type: integer
+              format: int32
+              description: 'Product reference under which the Account to be opened.(Domain Name: d_ProductId)Eg
+                : 290 - A_SB_Salary, 291 - A_Cash_Account_Auto, 304 - A_Basic_Account) Allowed Length:
+                Number(6) '
+            stakingCommission:
+              type: number
+              format: double
+              example: -99.99
+              description: staking Commission
+            operationMode:
+              type: integer
+              format: int32
+              example: -999
+              description: 'Mode of Operation. Possible values : 1 - Owned Singly, 2 - Joint Owner Of
+                the things, 3 - PwrOfAttrny, 4 - Proprtr, 5 - AllJntly, 6 - AnyOneOrSrvvr, 7 - AnyTwoJntly,
+                8 - AnyThreeJntly, 9 - AuthSgAndAnyOne, 10 - AuthSgnAnyOne, 11 - FirstOnly, 12 - FirstTwoJntly,
+                13 - FirstThreeJntly, 14 - EithrOrSrvvr, 15 - FrmrOrSrvvr, 16 - JntlyOrSrvvr, 17 - AuthSgnOneOrAll,
+                18 - SlfOrAuthSgntry, 19 - KurtaOrHuf, 20 - LftThmbImprssn, 21 - MinorOvrThrteen, 22 -
+                AnyTrsteesJntly, 23 - AEPCacc, 24 - MnrGdnOptdByGdn, 25 - MinorOptdByGdn(Domain Name:
+                d_OwnershipType)'
+            extensibilityMap:
+              type: string
+              description: Custom key - value pair of attributes for extensibility enablement
+            openingDate:
+              type: string
+              example: _NS_
+              description: The date in which account is opened(Format:yyyymmdd)
+            portfolioId:
+              type: integer
+              format: int32
+              description: PorfolioID
+            bsplcodeid:
+              type: string
+              example: _NS_
+              description: 'Bspl code id : Please provide the BSPL under which the account has to be opened
+                (Mandatory for Nostro account)'
+            externalReferenceNum:
+              type: string
+              example: _NS_
+              description: 'Unique reference : (Mandatory for Nostro Account)'
+            groupId:
+              type: string
+              example: _NS_
+              description: GroupID
+          title: AccountDetailsRequest
+        accountRelations:
+          type: array
+          description: AMBT2020CreateAcntActvMasterCraftVector_arg5_TO
+          items:
+            type: object
+            properties:
+              customerId:
+                type: integer
+                format: int32
+                example: -999
+                description: Customer Id of the related custoner to be provided
+              relatedCustomerName:
+                type: string
+                example: _NS_
+                description: Name of the Related Customer to be Provided
+              accountRelationType:
+                type: integer
+                format: int32
+                example: -999
+                description: '(Domain Name: d_BPReln) Applicable values : 6 - Joint Owner, 17 - Guardian,
+                  315 - Legal Guardian, 316 - Group Member'
+              validFrom:
+                type: string
+                example: _NS_
+                description: 'Valid From Date of Relation.(Date Format : YYYYMMDD)'
+            title: AMBT2020CreateAcntActvMasterCraftVector_arg5_TO
+      title: createAccountResource
+  - name: languageCode
+    in: header
+    description: languageCode
+    required: true
+    type: integer
+    format: int32
+  - name: mu_id
+    in: header
+    description: mu_id
+    required: false
+    type: string
+  - name: referenceId
+    in: header
+    description: Place holder for Token based authentication
+    required: false
+    type: string
+  - name: requesthash
+    in: header
+    description: Request payload for hash validation
+    required: false
+    type: string
+  - name: userId
+    in: header
+    description: userId
+    required: true
+    type: integer
+    format: int32
+  consumes:
+  - application/xml
+  - application/json
+  produces:
+  - application/xml
+  - application/json
+  responses:
+    '200':
+      description: Request is successfully Executed. Please view the response.
+      schema:
+        type: object
+        properties:
+          account:
+            type: object
+            properties:
+              bban:
+                type: string
+                description: BBAN of the account opened
+              groupId:
+                type: string
+                description: This field is to fetch GroupID
+              ibanNumber:
+                type: string
+                description: IBAN of the account opened
+              accountCurrency:
+                type: string
+                description: 'Currency of the account opened (Domain Name: d_CurrCode / 3 character ISO
+                  currency code) Eg : MXN, EUR, USD, INR'
+              status:
+                type: integer
+                format: int32
+                description: 'Account Status for the Created Account (Domain Name: d_AccStat) Eg : 2 -
+                  Active'
+              extensibilityMap:
+                type: string
+                description: Custom key - value pair of attributes for extensibility enablement
+            title: CreateAccountDetailResponse
+        title: createAccountResponse
+    '400':
+      description: API has not been able to process the request.Please check the response for errors and
+        correct the request.
+      schema:
+        type: object
+        properties:
+          error:
+            type: string
+          message:
+            type: string
+          status:
+            type: integer
+            format: int32
+        title: ErrorDetails
+    '404':
+      description: Requested service is not found.
+    '500':
+      description: There has been an internal error at the server.
+context:
+  api_title: TCS BaNCS RestFul API Documentation
+  api_description: Please find the list of API available in TCS BaNCS
+  tag_descriptions:
+    AccountManagement: This API services are used to create, view and cancel account related details
+  security_schemes: {}
+  path_siblings:
+    other_methods: []
+    related_paths:
+    - /accountManagement/account/CASABalanceList
+    - /accountManagement/account/CASATransactions/{accountReference}
+    - /accountManagement/account/accountBalanceStatement
+    - /accountManagement/account/accountCount
+    - /accountManagement/account/accountDetailsForGroupID
+    - /accountManagement/account/accountDetailsWithAddress/{accountReference}
+    - /accountManagement/account/balanceDetails/{accountReference}
+    - /accountManagement/account/balanceList
+    - /accountManagement/account/blockList/{accountReference}
+    - /accountManagement/account/cashBlock

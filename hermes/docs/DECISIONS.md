@@ -21,6 +21,15 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
+### 2026-07-04 — M2 (from milestone review)
+
+- **Token cap enforced on the full rendered ERD** (endpoint + operation + context + flag), not just the operation subtree. Truncation ladder, in order: inline depth 4→3→2→1, then per-field description cap (500 chars), then collapse largest `properties` maps and `enum` lists >25 values (deepest first). If bulk remains outside those shapes the ERD can still exceed the cap (flagged `truncation_applied`) — accepted residual risk, revisit if M7 hits it.
+- **Implementation constants** beyond the spec-fixed ones (api_description 1500 chars, tag_description 500 chars, in-truncation description cap 500 chars, enum threshold 25/keep 10) live in reducer.py as module constants — they shape a deterministic artifact and cache keys, so they are code, not runtime config.
+- **Unknown `--endpoint` on inspect exits 2** (invalid invocation per 00-SPEC §6); CLI errors go to stderr so stdout stays pipeable ERD/report content.
+- **`find_operation` lives in spec_loader** next to OperationRef (M6 report needs the same lookup).
+- **Snapshot recording is opt-in** (`HERMES_RECORD_SNAPSHOTS=1`); a missing baseline fails the test instead of self-recording, so a regressed reducer can never bless its own output. Baselines are committed.
+- **Pooled OAS3 `#/components/requestBodies` refs consume one inline-depth level** like any other ref link — a schema reached through a pooled requestBody truncates one level earlier than the same schema inlined directly. Accepted asymmetry.
+
 ### 2026-07-04 — M1 (from milestone review)
 
 - **Test-plan fixture numbers corrected to the fixture as built**: ~55 → ~50 seeded instances (actual 52), "1–3 smells per op" → "most 1–3, Appendix-B clone carries 5". The composition floor (every smell ≥4 in the swagger2 fixture alone, 8 clean controls) is unchanged and now test-enforced.

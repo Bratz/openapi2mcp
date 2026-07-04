@@ -15,7 +15,24 @@ def _not_implemented(name: str, milestone: str) -> int:
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
-    return _not_implemented("inspect", "M2")
+    import sys
+
+    from hermes.reducer import reduce_operation
+    from hermes.spec_loader import SpecError, find_operation, load_spec
+
+    try:
+        spec = load_spec(args.spec)
+    except SpecError as exc:
+        print(f"hermes inspect: {exc}", file=sys.stderr)
+        return 2
+    try:
+        op = find_operation(spec, args.endpoint)
+    except KeyError as exc:
+        # Unknown endpoint key = invalid invocation (00-SPEC §6 → exit 2).
+        print(f"hermes inspect: {exc.args[0]}", file=sys.stderr)
+        return 2
+    print(reduce_operation(spec, op).yaml, end="")
+    return 0
 
 
 def cmd_estimate(args: argparse.Namespace) -> int:

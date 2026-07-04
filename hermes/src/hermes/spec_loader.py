@@ -105,6 +105,20 @@ def load_spec(path: str | Path) -> LoadedSpec:
     return LoadedSpec(version=version, title=title, raw=raw, operations=operations)
 
 
+def find_operation(spec: LoadedSpec, endpoint_key: str) -> OperationRef:
+    """Resolve 'METHOD /path' (method case-insensitive) to an OperationRef."""
+    parts = endpoint_key.split(None, 1)
+    if len(parts) != 2:
+        raise KeyError(f'endpoint must look like "GET /path", got {endpoint_key!r}')
+    method, path = parts[0].upper(), parts[1].strip()
+    for op in spec.operations:
+        if op.method == method and op.path == path:
+            return op
+    methods = [o.method for o in spec.operations if o.path == path]
+    hint = f" (path exists with methods: {', '.join(methods)})" if methods else ""
+    raise KeyError(f"no operation {method} {path}{hint}")
+
+
 def filter_operations(
     operations: list[OperationRef],
     *,
