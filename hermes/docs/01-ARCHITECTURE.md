@@ -16,8 +16,8 @@ hermes/
 │   ├── spec_loader.py           # load+validate Swagger2/OAS3, enumerate Operation records
 │   ├── reducer.py               # Operation -> ERD (spec §5): ref inlining, $unresolved markers, caps, YAML
 │   ├── smells/
-│   │   ├── catalog.py           # the 9 hardcoded Smell objects (id, category, display name, definition)
-│   │   └── prompts/             # one module per smell; Appendix-A template structure; PROMPT_VERSION each
+│   │   ├── catalog.py           # the 9 hardcoded Smell objects (definition, scoping, occurs_when, guards)
+│   │   └── prompts/__init__.py  # Appendix-A template assembly + PROMPT_VERSIONS dict (see DECISIONS M3)
 │   ├── llm.py                   # Anthropic client wrapper: structured output, retry, usage accounting
 │   ├── schemas/
 │   │   ├── finding.schema.json

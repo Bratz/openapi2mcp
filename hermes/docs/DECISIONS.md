@@ -21,6 +21,14 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
+### 2026-07-04 — M3 (from milestone review)
+
+- **Prompt layout: single `smells/prompts/__init__.py`** with a `PROMPT_VERSIONS` dict instead of nine per-smell modules — the per-smell content already lives in `catalog.py` dataclasses, so per-smell modules would be nine copies of one template. 01-ARCHITECTURE layout updated.
+- **Appendix-A deviations (beyond the already-logged structured-outputs swap):** the paper's "endpoint key format GET:/users" and "empty JSON object when clean" classification rules are dropped — endpoint identity is stamped by code and `smell_detected=false` replaces the empty object; the `{openapi_json}` slot moves from mid-system-prompt to the user message so the per-smell system prompt stays byte-stable and prompt-cacheable across all ~927 endpoint calls.
+- **Eval-integrity rule: prompts must never quote golden-fixture-invented text.** The milestone review caught fixture-verbatim examples in occurs_when/guards (param names, class idioms, marketing strings, the clean-control's literal path); all were neutralized to paper-sourced or fixture-disjoint phrasings. Pattern-level overlap remains by design (fixture and prompts both instantiate the taxonomy) — the golden eval therefore measures "implements the taxonomy", and M7's real-corpus smoke is the generalization check.
+- **Paper's ≥120-chars-per-section rule applied to BOTH sections** (justification and suggestions).
+- **`-v1` prompt versions are finalized as of the M3 commit**; any later prompt-affecting edit (catalog text included) bumps the affected smell's version and re-records its snapshot.
+
 ### 2026-07-04 — M2 (from milestone review)
 
 - **Token cap enforced on the full rendered ERD** (endpoint + operation + context + flag), not just the operation subtree. Truncation ladder, in order: inline depth 4→3→2→1, then per-field description cap (500 chars), then collapse largest `properties` maps and `enum` lists >25 values (deepest first). If bulk remains outside those shapes the ERD can still exceed the cap (flagged `truncation_applied`) — accepted residual risk, revisit if M7 hits it.
