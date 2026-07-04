@@ -118,11 +118,12 @@ class FakeLLM:
         )
 
     def _lookup(self, smell_id: str, erd_yaml: str) -> AgentResponse:
-        if smell_id in self.responses and isinstance(self.responses.get(smell_id), AgentResponse):
+        if isinstance(self.responses.get(smell_id), AgentResponse):
             return self.responses[smell_id]
         for key, response in self.responses.items():
             if isinstance(key, tuple):
                 marker, key_smell = key
-                if key_smell == smell_id and marker in erd_yaml:
+                # Match the ERD's own operation, not sibling-path context lines.
+                if key_smell == smell_id and f"operation_id: {marker}\n" in erd_yaml:
                     return response
         return not_detected()

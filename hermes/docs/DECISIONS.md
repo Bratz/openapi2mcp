@@ -21,6 +21,15 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
+### 2026-07-04 — M5
+
+- **Cache-only resume; no LangGraph checkpointer.** SqliteSaver adds serialization constraints on Send fan-out for no benefit — the content-hash cache already makes an interrupted run's completed pairs free on re-run (this was pre-authorized in the M2/architecture notes). `--resume` is therefore just "same run-id, cache does the work"; findings.jsonl appends stay idempotent by id.
+- **Rule-based verdict** (0-1 findings, --no-consolidate, consolidator failure): 0 smells → agent-ready; any high severity or ≥3 distinct smells → not agent-consumable; else needs adaptation.
+- **Node closures live in graph.py** (they bind llm/cache/config/store); `nodes.py` holds the pure helpers (verdict rule, consolidation-edit application with the ±1 clamp).
+- **M5 ships a placeholder report.html** (valid, self-contained, findings table + embedded JSON) so `hermes scan` always writes a usable artifact; the full dashboard is M6.
+- **Budget ceiling enforcement**: a thread-safe cost meter accumulates real + estimated spend across detect/consolidate; exceeding HERMES_MAX_COST_USD raises BudgetExceeded → exit 3 with a resume hint. Responses are cached BEFORE the budget check so a paid call is never bought twice.
+- **From the M5 review**: consolidations are cached too (key = findings payload + consolidator version + model) — without this a budget-capped scan could loop paying for consolidations forever; interrupted runs (budget/Ctrl-C) still write run.json with `status: interrupted*` so run dirs are never empty; run artifacts are rewritten wholesale per completed run (append-by-id would let stale finding bodies coexist with fresh verdicts); severity re-adjustment edits for the same finding are ignored (no compounding past the ±1 clamp); embedded report JSON escapes `</` (script-breakout XSS from hostile spec text); `--resume` requires `--run-id`; `max_concurrency` gets no floor (concurrency=1 is strictly serial — verified against langgraph 1.2 internals).
+
 ### 2026-07-04 — M4 (from milestone review)
 
 - **Threading, not asyncio**: `llm.py` uses a synchronous client + `threading.BoundedSemaphore`; LangGraph's sync executor runs Send branches in a thread pool. Simpler to test deterministically than an async stack.

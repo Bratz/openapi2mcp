@@ -33,11 +33,11 @@ def test_every_subcommand_parses_and_dispatches(name):
     # Implemented commands hit their real error contract on a missing spec
     # (exit 2 per docs/00-SPEC.md §6); unimplemented ones fail loudly with 1.
     argv, expected = {
-        "scan": (["scan", "--spec", "x.json"], 1),
-        "estimate": (["estimate", "--spec", "x.json"], 1),
-        "report": (["report", "--run", "runs/r1"], 1),
+        "scan": (["scan", "--spec", "x.json"], 2),      # implemented: missing spec -> 2
+        "estimate": (["estimate", "--spec", "x.json"], 2),
         "inspect": (["inspect", "--spec", "x.json", "--endpoint", "GET /x"], 2),
-        "eval": (["eval"], 1),
+        "report": (["report", "--run", "runs/r1"], 1),  # lands in M6
+        "eval": (["eval"], 1),                          # lands in M6
     }[name]
     assert main(argv) == expected
 
