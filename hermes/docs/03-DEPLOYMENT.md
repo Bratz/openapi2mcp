@@ -54,7 +54,7 @@ hermes eval --live      # golden-fixture gates after any prompt change
 
 | Item | Basis | Ballpark (full BaNCS scan) |
 |---|---|---|
-| Detection | 927 ops × 9 smells, Haiku 4.5 ($1/$5 per MTok), ~1.5k in / 400 out per call, system prompts cache-read after first hit per smell | ~$12–25 |
+| Detection | 927 ops × 9 smell agents (5 documentation + 4 REST, per 00-SPEC §3), Haiku 4.5 ($1/$5 per MTok), ~1.5k in / 400 out per call, system prompts cache-read after first hit per smell | ~$12–25 |
 | Consolidation | ~60% of ops, Sonnet 5 ($3/$15 per MTok), ~1.2k in / 300 out | ~$3–6 |
 | Re-scan after prompt change to ONE smell | only that smell's 927 calls re-run (cache) | ~$2–3 |
 | Live eval | 46 ops × 9 + consolidation, Haiku | ~$0.50 |
@@ -66,7 +66,7 @@ Prices as of 2026-07; `config.py` owns the numbers. If full-scan costs become ro
 - **Rate limits:** SDK auto-retries 429/5xx; hermes additionally halves concurrency for 60 s on a 429. If scans crawl, lower `HERMES_CONCURRENCY`; if your org tier is generous, 16 is fine.
 - **Interruptions are cheap:** the content-hash cache means a re-run only pays for what hasn't completed. Never delete `runs/cache.db` casually.
 - **Prompt changes invalidate deliberately:** bump the edited smell's `PROMPT_VERSION`. Never edit a prompt without bumping — silent cache poisoning.
-- **Data sensitivity:** endpoint documentation text is sent to the Anthropic API. The BaNCS spec here is a public demo spec. Before scanning confidential specs, confirm your org's data-handling posture (API data retention applies).
+- **Data sensitivity:** endpoint documentation text is sent to the Anthropic API. The BaNCS spec here is a public demo spec, so that is fine. The paper itself faced the confidential case and solved it by restricting model selection to locally-deployable LLMs (their winner: gpt-oss:120b — see 05-PAPER-FACTS §1); if confidential specs ever need scanning, the precedent is a local backend behind the `llm.py` seam, not sending the spec out.
 - **Determinism caveat:** LLM detection is stochastic run-to-run even with caching (cache makes *repeats* deterministic, not fresh runs). Findings carry `confidence`; treat single-run diffs on unchanged specs as noise unless eval gates moved.
 
 ## 6. CI (optional, later)

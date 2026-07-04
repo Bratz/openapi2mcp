@@ -8,7 +8,7 @@ Every milestone lists: **Build** (what to create), **Accept** (commands that mus
 
 ## M0 — Scaffolding
 
-**Build:** `hermes/pyproject.toml` (name `hermes`, Python ≥3.11, deps per 01-ARCHITECTURE §1, console script), `src/hermes/` package skeleton with empty modules, `tests/unit/test_scaffold.py`, `.gitignore` entries (runs/, .venv), `docs/DECISIONS.md` stub.
+**Build:** `hermes/pyproject.toml` (name `hermes`, Python ≥3.11, deps per 01-ARCHITECTURE §1, console script), `src/hermes/` package skeleton with empty modules, `tests/unit/test_scaffold.py`, `.gitignore` entries (runs/, .venv). (`docs/DECISIONS.md` already exists — append to it, don't recreate.)
 
 **Accept:**
 ```bash
@@ -18,7 +18,7 @@ cd hermes && pip install -e ".[dev]" && hermes --help && pytest tests/unit -q
 
 ## M1 — Spec loading & filtering
 
-**Build:** `spec_loader.py` (Swagger 2.0 + OAS 3.x; Operation records with path/method/operation_id/tags; tag/path-glob/sample/seed filters), the golden fixtures **specs only** (`tests/fixtures/golden/seeded_spec.yaml` with SEEDED comments, `seeded_spec_oas3.yaml` — authored per 02-TEST-PLAN §2, including `expected.json`), unit tests per 02-TEST-PLAN §4 spec_loader bullet.
+**Build:** `spec_loader.py` (Swagger 2.0 + OAS 3.x; Operation records with path/method/operation_id/tags; tag/path-glob/sample/seed filters), the golden fixtures (`tests/fixtures/golden/seeded_spec.yaml` with SEEDED comments covering all 9 smells incl. a broken-`$ref` FRAGMENTED seed and an embedded-schema-in-description EXCESS_STRUCTURED seed, `seeded_spec_oas3.yaml`, and the **multi-label** `expected.json` — per 02-TEST-PLAN §2), unit tests per 02-TEST-PLAN §4 spec_loader bullet.
 
 **Accept:**
 ```bash
@@ -41,7 +41,7 @@ hermes inspect --spec ../api-docs.json --endpoint "GET /accountManagement/accoun
 
 ## M3 — Smell catalog & prompts
 
-**Build:** `smells/catalog.py` (9 smells, spec §3 criteria), `smells/prompts/<smell>.py` each with `SYSTEM_PROMPT`, `FEW_SHOTS` (≥2), `PROMPT_VERSION="<smell>-v1"`; severity rubric shared; prompt-assembly function returning the exact messages payload; snapshot tests of assembled prompts (so accidental prompt drift is visible in diffs).
+**Build:** `smells/catalog.py` (the 9 paper-actual smells: LAZY, BLOATED, TANGLED, FRAGMENTED, EXCESS_STRUCTURED, PATH_AND_METHOD, INPUT, RESPONSE, SECURITY — spec §3), `smells/prompts/<smell>.py` each with the **Appendix-A template structure** (role → definition → "typically occurs when" examples → task → classification rules incl. the smell's scoping rule → explanation/improvement rules with the `[SMELL] - [action title]` contract; source: 05-PAPER-FACTS §5), `occurs_when` examples (≥2), `PROMPT_VERSION="<smell>-v1"`; prompt-assembly function returning the exact messages payload; snapshot tests of assembled prompts (so accidental prompt drift is visible in diffs).
 
 **Accept:**
 ```bash
@@ -72,7 +72,7 @@ hermes estimate --spec tests/fixtures/golden/seeded_spec.yaml
 
 ## M6 — Report + eval harness
 
-**Build:** `report/render.py` + `template.html` (spec §7), `hermes report`, `eval/harness.py` + `eval/metrics.py` + `hermes eval [--live]` with gates (02-TEST-PLAN §3), report unit tests, offline-eval plumbing (recordings dir, staleness check).
+**Build:** `report/render.py` + `template.html` (spec §7, incl. the Appendix-C markdown per-endpoint report), `hermes report [--endpoint --md]`, `eval/harness.py` + `eval/metrics.py` (multi-label: Jaccard, F1-micro/macro, Hamming, cardinality difference) + `hermes eval [--live]` with gates Jaccard ≥ 0.75 / F1-micro ≥ 0.85 / Hamming ≤ 0.12 (02-TEST-PLAN §3); the eval report must print the paper's gpt-oss:120b reference row (Jaccard 0.85, F1μ 0.92, Hamming 0.07) next to ours for comparison; report unit tests, offline-eval plumbing (recordings dir, staleness check).
 
 **Accept:**
 ```bash
@@ -101,7 +101,7 @@ Plus: open criteria per 02-TEST-PLAN §5 (≥1 finding, report renders, cost < $
 
 ## M8 (human-gated) — Full scan
 
-Not autonomous: the full ~$15–30 scan is run by the user (`hermes scan --spec ../api-docs.json --yes`), who reviews `report.html`. Prepare a short `docs/RESULTS.md` template (totals, per-smell table, top-10 endpoints, avg findings/endpoint vs the paper's 4.08) to fill from run.json.
+Not autonomous: the full ~$15–30 scan is run by the user (`hermes scan --spec ../api-docs.json --yes`), who reviews `report.html`. Prepare a short `docs/RESULTS.md` template to fill from run.json: totals, per-smell % of endpoints side-by-side with the paper's Table 2 baseline (Response 100%, Lazy 90%, Input 88%, Security 68%, Path_and_Method 53%, Tangled 5%, Bloated 2%, Fragmented 2% — 05-PAPER-FACTS §7), avg smells/endpoint vs the paper's 4.08, and top-10 worst endpoints.
 
 ---
 

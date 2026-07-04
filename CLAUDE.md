@@ -19,6 +19,8 @@ All design documents live in `hermes/docs/` and are authoritative. Read them bef
 | `hermes/docs/02-TEST-PLAN.md` | Unit tests, golden fixture suite, metrics gates, how to self-verify |
 | `hermes/docs/03-DEPLOYMENT.md` | Install, env vars, run commands, cost model, operational guidance |
 | `hermes/docs/04-BUILD-PLAN.md` | Ordered milestones M0–M7 with acceptance criteria — follow this when building |
+| `hermes/docs/05-PAPER-FACTS.md` | Ground-truth extract of the paper (taxonomy, prompt template, report format, baseline results) — paper fidelity source |
+| `hermes/docs/DECISIONS.md` | Decision log + deliberate deviations from the paper |
 
 ## Ground rules for autonomous build loops
 

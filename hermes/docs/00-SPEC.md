@@ -1,51 +1,53 @@
 # Hermes — Functional Specification
 
-Reproduction of the system described in **"Making OpenAPI Documentation Agent-Ready: Detecting Documentation and REST Smells with a Multi-Agent LLM System"** (arXiv:2605.14312, EASE 2026), adapted to this repo's context (TCS BaNCS Swagger 2.0 spec → MCP tools).
+Reproduction of the system described in **"Making OpenAPI Documentation Agent-Ready: Detecting Documentation and REST Smells with a Multi-Agent LLM System"** (arXiv:2605.14312, EASE 2026), adapted to this repo's context (TCS BaNCS Swagger 2.0 spec → MCP tools). Paper ground truth is condensed in `05-PAPER-FACTS.md`; deliberate deviations are logged in `DECISIONS.md`.
 
 **Scope decision (locked):** detection only, paper-faithful. Hermes detects smells and produces explainable diagnostic reports. It does NOT modify specs, generate fixes beyond textual suggestions, or regenerate MCP tools.
 
 ## 1. Purpose
 
-Given an OpenAPI/Swagger spec, analyze **every operation (endpoint × HTTP method) individually** with specialized LLM agents and report documentation and REST design smells that impede AI-agent consumption (task planning, tool selection, payload construction). Output: machine-readable findings + a self-contained HTML dashboard.
+Given an OpenAPI/Swagger spec, analyze **every operation (endpoint × HTTP method) individually** with specialized LLM agents and report documentation and REST design smells that impede AI-agent consumption (task planning, tool selection, payload construction). Output: machine-readable results + Appendix-C-style per-endpoint diagnostic reports + a self-contained HTML dashboard.
 
 ## 2. Inputs
 
 - Swagger 2.0 **and** OpenAPI 3.x JSON/YAML specs (Swagger 2.0 is the primary target — `api-docs.json`).
-- Local `$ref`s must be resolved into each endpoint's reduced representation. External refs: resolve if trivially reachable on disk, otherwise record as a `ref_unresolved` note in the representation (do not crash).
+- Local `$ref`s must be resolved into each endpoint's reduced representation. **Unresolvable references are not an error — they are FRAGMENTED-smell evidence** (paper Table 3): record them in the ERD as `{"$unresolved": "<ref>"}` so the FRAGMENTED agent can see them.
 - Specs up to at least 15 MB / 1,000 operations must be handled without loading the full document into any prompt.
 
-## 3. Smell taxonomy (locked: paper's 9, hardcoded)
+## 3. Smell taxonomy (locked: paper-actual, 9 agents)
 
-Nine smell categories, one specialized agent prompt each. Definitions below are the operational criteria each agent's prompt must encode (definition + classification criteria + 2–3 few-shot examples each, per the paper's few-shot prompting strategy).
+Nine specialized agents, matching the system as it actually ran in the paper (Table 3 + Appendix C — see `05-PAPER-FACTS.md` §2–3): **5 documentation smells** (Khan et al.'s taxonomy) + **4 REST smells** (PATH and METHOD merged, as in the paper's reporting and diagnostic reports).
+
+Each agent's prompt follows the paper's Appendix A template (definition + "typically occurs when" examples + classification criteria + per-smell scoping rules). Criteria below combine the paper's definitions with its Table 3 evidence patterns.
 
 ### Documentation smells (category: `documentation`)
 
-| ID | Name | Detect when (operationalization) |
-|---|---|---|
-| `LAZY` | Lazy documentation | Superficial/generic text: missing or <10-word summaries; descriptions that restate the operation name; undocumented parameters or request-body fields; generic response descriptions ("OK", "Success", "Error"); missing examples where the schema is non-trivial. |
-| `BLOATED` | Bloated documentation | Excessively verbose text with low information density: descriptions >~150 words whose content could be stated in a fraction of the length; boilerplate repeated verbatim across fields; marketing/filler language that adds no operational guidance. |
-| `TANGLED` | Tangled documentation | Unrelated concerns mixed in one textual fragment: a description that combines auth setup, business rules, error semantics, and changelog notes without structure; parameter docs that describe other parameters or global behavior. |
-| `FRAGMENTED` | Fragmented documentation | Essential information dispersed across disconnected sections without explicit linkage: constraints stated only in a top-level/tag description but needed to call this endpoint; header requirements documented in an unrelated field; enum meanings defined elsewhere with no reference. NOTE: the agent only sees the reduced endpoint representation plus the spec-level context block (§5), so FRAGMENTED is judged against that context block. |
+| ID | Name | Detect when | Scoping rule |
+|---|---|---|---|
+| `LAZY` | Lazy documentation | Incomplete, vague, or generic documentation: very short/generic `summary` (e.g. "Get data"); absent or redundant `description`; semantic mismatch between summary and description; no examples or constraints; intent requires external knowledge. | Analyze ONLY the operation's `summary` and `description` (per Appendix A). |
+| `BLOATED` | Bloated documentation | Excessively verbose descriptions with limited informational value; filler/boilerplate that adds no operational guidance. | Textual fields only. |
+| `TANGLED` | Tangled documentation | Unrelated concerns (business logic, security, error handling, changelog) mixed within the same textual fragment. | Textual fields only. |
+| `FRAGMENTED` | Fragmented documentation | **Structural**: the operation references schemas/components not present in the specification (broken/missing `$ref`s → incomplete documentation). Largely mechanically checkable — the reducer surfaces `$unresolved` markers; the agent confirms and explains. | Whole ERD; keys on `$unresolved` markers. |
+| `EXCESS_STRUCTURED` | Excess structured information | Class-like definitions, nested structures, or formal specifications written **inside `summary`/`description` natural-language fields**. Normative schema structure under `definitions`/`components` is NOT the smell. | Textual fields only. |
 
 ### REST smells (category: `rest`)
 
-| ID | Name | Detect when (operationalization) |
-|---|---|---|
-| `PATH` | Path design smells | Non-resource-oriented or inconsistent paths: verbs in paths (`/getAccountDetails`), inconsistent casing/pluralization vs sibling paths, redundant path segments, CRUD-through-POST-only patterns encoded in the URL, ambiguous path parameter names (`/{id1}/{id2}`). |
-| `METHOD` | HTTP method smells | Method semantics violated: GET with request body; POST used for pure reads; PUT/PATCH/DELETE semantics mismatched with the documented behavior; state-changing GET. |
-| `INPUT` | Input modeling smells | Parameter/body design that breaks payload construction: required fields not marked required; stringly-typed fields that are really enums/dates/numbers; undocumented magic values; duplicated info between header/query/body; missing formats/patterns on constrained fields; giant flat objects with unclear optionality. |
-| `RESPONSE` | Response modeling smells | Response contract unusable for planning: only a 200 defined with no error responses; responses with no schema; same schema for success and failure; status codes contradicting the description; untyped `object` payloads. |
-| `SECURITY` | Security description smells | Auth requirements absent, contradictory, or undocumented at the operation level: no security scheme referenced although headers imply auth (e.g. `userId`, `entity` headers); documented auth headers not present in parameters; scheme referenced but never defined. |
+| ID | Name | Detect when | Scoping rule |
+|---|---|---|---|
+| `PATH_AND_METHOD` | Path & Method design | Action-oriented URIs with verbs (`/getUsers`, `/updateStatus`); inconsistent naming/casing vs sibling paths; long or opaque paths with internal acronyms; non-idiomatic HTTP method use (POST for updates that should be PUT/PATCH, GET for creation, state-changing GET, GET with request body). | Path string, method, sibling-path context. |
+| `INPUT` | Input modeling | Parameters/bodies specified only by type with no semantic description; ambiguous names (abbreviations, internal acronyms) unexplained; missing ranges/formats/patterns; required fields without rationale or not marked required; magic values undocumented. | Parameters + request body. |
+| `RESPONSE` | Response modeling | Schemas present but minimal explanatory text; generic descriptions ("Successful Response", "OK"); no semantic clarification of payload meaning across success/error; missing error responses; unconstrained `object` payloads (the paper's `{status, data:object}` anti-pattern); status codes contradicting descriptions. | Responses section. |
+| `SECURITY` | Security description | Auth missing or unclear at operation level: no scheme referenced although parameters imply auth (e.g. `userId`, `entity` headers); scheme defined but no operational guidance (how to obtain credentials, scopes, constraints); scheme referenced but never defined. | Security refs + parameters + spec-level scheme context. |
 
-An agent may report **0..n findings** for its (endpoint, smell) pair. Each finding must cite concrete evidence locations.
+Detection is **binary per (operation, smell)** — multi-label classification per endpoint, exactly as the paper formulates it. A detected smell carries justification bullets and suggested actions (schema below).
 
-## 4. Finding schema (canonical JSON)
+## 4. Result schema (canonical JSON)
 
-Everything downstream (store, dashboard, eval) consumes this shape. JSON Schema lives at `src/hermes/schemas/finding.schema.json` and is enforced on every agent response.
+One record per (operation, smell) **detection** (non-detections are recorded in run stats, not as records). JSON Schema at `src/hermes/schemas/finding.schema.json`, enforced on every agent response.
 
 ```json
 {
-  "id": "f_<sha1 of endpoint_key+smell+evidence[0].location+summary>",
+  "id": "f_<sha1 of endpoint_key + smell>",
   "run_id": "r_20260704T120000Z",
   "api_title": "TCS BaNCS RestFul API Documentation",
   "endpoint": {
@@ -56,33 +58,39 @@ Everything downstream (store, dashboard, eval) consumes this shape. JSON Schema 
   },
   "smell": "LAZY",
   "category": "documentation",
-  "severity": "medium",
-  "confidence": 0.85,
-  "summary": "Response descriptions are generic placeholders",
-  "evidence": [
-    {"location": "responses.200.description", "excerpt": "OK"}
+  "justification": [
+    "The summary is vague and the endpoint has no description, providing insufficient guidance about purpose, behavior, or usage."
   ],
-  "justification": "1-3 sentences: why this impedes agent consumption",
-  "suggestion": "1-3 sentences: concrete improvement",
+  "suggestions": [
+    {
+      "action_title": "[LAZY] - Improve documentation",
+      "description": "Provide a complete description including endpoint purpose, expected inputs, and outputs, with usage examples."
+    }
+  ],
+  "extensions": {
+    "severity": "medium",
+    "confidence": 0.85,
+    "evidence": [{"location": "summary", "excerpt": "Get data"}]
+  },
   "detector": {"model": "claude-haiku-4-5", "prompt_version": "lazy-v1"}
 }
 ```
 
 Rules:
-- `severity` ∈ {`low`, `medium`, `high`}: high = an agent will likely fail to call this endpoint correctly; medium = degraded tool selection/payload quality; low = cosmetic/consistency issue.
-- `confidence` ∈ [0,1], produced by the agent.
-- `evidence[].location` is a dot-path relative to the operation object (or `path`, `spec` for path-level/spec-level evidence). At least one evidence item required.
-- `id` is deterministic so re-runs dedup naturally.
+- **Paper core** (always present, used by eval): `smell`, `justification` (≥1 bullet, complete sentences, section total ≥120 chars per the paper's explanation rule), `suggestions` (≥1, `action_title` matching `[<SMELL>] - <title>`).
+- **`extensions`** (locked decision): severity ∈ {low, medium, high}, confidence ∈ [0,1], evidence dot-path locations. Used for dashboard triage and ranking; **never used in eval scoring** (the eval oracle is multi-label per endpoint).
+- `id` is deterministic (`endpoint_key + smell`), so re-runs dedup naturally; multi-label detection means at most one record per (operation, smell).
+- Post-validation in code: clamp confidence, enforce action-title format (rewrite prefix if the model got it wrong), stamp `detector`.
 
 ## 5. Reduced endpoint representation (ERD)
 
-All agents for a given endpoint receive the **same** reduced representation (paper-faithful):
+All agents for a given operation receive the **same** reduced representation (paper §3.5 / Appendix B): method, path, summary, description, parameters, request body, responses, referenced schemas, and security definitions — nothing else from the document.
 
-- Operation object with all local `$ref`s inlined, depth-capped at 4 levels; deeper schemas replaced by `{"$truncated": "<schema name>"}`.
-- Sibling context: the endpoint's path item (other methods on the same path, names only), and up to 10 sibling path strings sharing the first path segment (for PATH consistency judgments).
-- Spec-level context block: `info.title`, `info.description` (truncated to 1,500 chars), matching `tags[].description`, and `securityDefinitions`/`components.securitySchemes` names + types.
-- Serialized as YAML (more token-efficient than JSON), deterministic key order.
-- Hard cap: 6,000 tokens per ERD (measured with `count_tokens` once per calibration, approximated as chars/3.5 at runtime). Over-cap ERDs get schema bodies progressively truncated (deepest first) and a `truncation_applied: true` marker that is also copied into any finding's `detector` block.
+Engineering additions (ours, for scale):
+- Local `$ref`s inlined, depth-capped at 4 levels; deeper schemas replaced by `{"$truncated": "<schema name>"}`; **unresolvable refs replaced by `{"$unresolved": "<ref>"}`** (FRAGMENTED evidence, never a crash).
+- Sibling context for PATH_AND_METHOD: other methods on the same path (names only) + up to 10 sibling path strings sharing the first path segment.
+- Spec-level security context: `securityDefinitions`/`components.securitySchemes` names + types (needed by SECURITY).
+- Serialized as YAML, deterministic key order. Hard cap 6,000 tokens (chars/3.5 heuristic); over-cap ERDs get schema bodies progressively truncated (deepest first) with `truncation_applied: true` copied into any resulting record's `detector` block.
 
 ## 6. CLI contract
 
@@ -93,39 +101,56 @@ hermes scan --spec PATH [--out DIR=runs/] [--run-id ID] [--resume]
             [--tags TAG ...] [--paths GLOB ...] [--sample N] [--seed 42]
             [--detect-model ID] [--consolidate-model ID]
             [--concurrency 8] [--max-endpoints N] [--yes]
-hermes report --run DIR [--out report.html]     # re-render HTML from stored findings
-hermes inspect --spec PATH --endpoint "GET /x"  # print the ERD that agents would see
-hermes eval [--live] [--report]                 # golden-fixture metrics (see 02-TEST-PLAN)
-hermes estimate --spec PATH [filters]           # endpoint count + call count + $ estimate, no API calls
+hermes report --run DIR [--out report.html]            # re-render dashboard
+hermes report --run DIR --endpoint "GET /x" --md       # Appendix-C-style markdown diagnostic report
+hermes inspect --spec PATH --endpoint "GET /x"         # print the ERD agents would see
+hermes eval [--live] [--report]                        # golden-fixture multi-label metrics (02-TEST-PLAN)
+hermes estimate --spec PATH [filters]                  # endpoint/call counts + $ estimate, no API calls
 ```
 
 Behavior requirements:
-- `scan` prints an upfront estimate (endpoints, LLM calls, approximate cost) and requires `--yes` or interactive confirmation before spending money.
-- `scan` writes `runs/<run_id>/findings.jsonl`, `runs/<run_id>/run.json` (config, counts, token usage, cost), `runs/<run_id>/report.html`.
-- `--resume` continues an interrupted run: cached (endpoint, smell) results are not re-queried (see 01-ARCHITECTURE §caching).
+- `scan` prints an upfront estimate (endpoints, LLM calls = ops × 9 + consolidations, approximate cost) and requires `--yes` or interactive confirmation before spending money.
+- `scan` writes `runs/<run_id>/findings.jsonl`, `endpoints.jsonl` (per-endpoint smell-set + verdict), `run.json` (config, counts, token usage, cost), `report.html`.
+- `--resume` continues an interrupted run via the content-hash cache (01-ARCHITECTURE §4).
 - Exit codes: 0 success; 2 spec parse failure; 3 interrupted (resumable); 4 budget/confirmation declined.
 
-## 7. HTML dashboard (locked: static, self-contained)
+## 7. Reports
+
+### 7.1 Per-endpoint diagnostic report (paper Appendix C format)
+
+For any endpoint, Hermes can emit the paper's markdown report shape:
+
+```
+## API Info          – title
+## Endpoint Info     – method, path
+## Model             – detect model id
+## Identified Smells – comma list (display names, e.g. "Lazy, Security, Path & Method")
+### Explanations     – one "### <Smell>" block per detected smell, justification bullets
+## Improvement Suggestions
+[SMELL] - <action title> | <description>
+```
+
+Available via `hermes report --endpoint ... --md` and rendered inside the dashboard's row expansion.
+
+### 7.2 HTML dashboard (locked: static, self-contained)
 
 Single `report.html`, no external requests (inline CSS/JS, no CDN). Must render from `file://`.
 
-Required elements:
-1. Header: API title, spec version, run timestamp, model(s) used, totals (endpoints scanned, findings, avg findings/endpoint — the paper's headline metric).
-2. Summary cards: findings per smell (9 bars/cards), findings per severity, top-10 worst endpoints.
-3. Findings table: columns method, path, smell, severity, confidence, summary. Client-side filters: smell, category, severity, tag, free-text path search. Sortable.
-4. Row expansion: evidence excerpts with locations, justification, suggestion.
+1. Header: API title, spec version, run timestamp, model(s), totals (endpoints scanned, detections, **avg smells/endpoint** — comparable to the paper's 4.08).
+2. Summary cards: detections per smell (9), per severity (extension field), % of endpoints affected per smell (comparable to paper Table 2), top-10 worst endpoints.
+3. Findings table: method, path, smell, severity, confidence, first justification bullet. Client-side filters: smell, category, severity, tag, free-text path search. Sortable.
+4. Row expansion: the Appendix-C-style report for that endpoint (justifications + suggestions), plus extension evidence excerpts.
 5. Per-tag (business domain) rollup table.
 6. Embedded raw data: findings JSON in a `<script type="application/json">` block so the file doubles as the data export.
 
-Constraint: must stay usable at 5,000 findings (virtualized or paginated table — pagination is acceptable and simpler).
+Constraint: usable at 5,000 findings (pagination is acceptable).
 
-## 8. Consolidation stage
+## 8. Consolidation
 
-After per-(endpoint, smell) detection, a consolidator pass per endpoint (single Sonnet call, only when the endpoint has ≥2 findings):
-- Dedups overlapping findings across smell categories (e.g. same missing description flagged by LAZY and INPUT — keep the more specific, note the merge).
-- Normalizes severity across agents.
-- Produces a 1-sentence endpoint verdict ("agent-ready" / "needs adaptation" / "not agent-consumable") recorded in `runs/<id>/endpoints.jsonl`.
-Consolidation must never invent findings; it may only merge, drop-as-duplicate, or adjust severity by one step (with reason recorded).
+The paper's central **Smell Detector Agent** "orchestrates the workflow and consolidates results into a unified explainable diagnostic report". In this implementation:
+
+- **Orchestration + aggregation is code** (the LangGraph graph collects the 9 agents' outputs into the unified per-endpoint report). This is the paper-faithful core.
+- **Optional extension** (kept from our design, marked as such): for endpoints with ≥2 detections, a single Sonnet call may normalize overlapping justifications and produce a 1-sentence endpoint verdict ("agent-ready" / "needs adaptation" / "not agent-consumable") stored in `endpoints.jsonl`. It may only merge/normalize — never invent detections. Disable with `--no-consolidate`.
 
 ## 9. Non-goals
 
@@ -134,6 +159,6 @@ Consolidation must never invent findings; it may only merge, drop-as-duplicate, 
 - No web service; CLI + static HTML only.
 - No support for GraphQL/AsyncAPI.
 
-## 10. Fidelity notes vs the paper
+## 10. Paper fidelity
 
-The paper's full text was not network-accessible when this spec was written; taxonomy names, the orchestrator/specialist architecture, shared reduced endpoint representation, few-shot structured prompting, and explainable per-finding output (justification + suggestion) are sourced from the abstract and indexed excerpts. The per-smell operational criteria in §3 are this project's own operationalization and MUST be treated as tunable (prompt files carry `prompt_version` for this reason). Record any deliberate deviation in `hermes/docs/DECISIONS.md`.
+`05-PAPER-FACTS.md` is the authoritative extract of the paper (taxonomy, prompt template, report format, baseline results). Deviations are deliberate and logged in `DECISIONS.md`: Claude API backend (paper: local gpt-oss:120b), CLI + static dashboard (paper: interactive URL-driven tool), synthetic golden fixtures (paper: 60 expert-annotated production endpoints), and the `extensions` fields in §4.

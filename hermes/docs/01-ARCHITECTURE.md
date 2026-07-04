@@ -1,42 +1,46 @@
 # Hermes — Architecture
 
-Locked decisions: **LangGraph** orchestration, **Claude API** (Haiku 4.5 fan-out + Sonnet consolidation), content-hash **caching + resumable runs**, **static HTML** rendering. Python ≥3.11.
+Locked decisions: **LangGraph** orchestration, **Claude API** (Haiku 4.5 fan-out + Sonnet 5 consolidation), content-hash **caching + resumable runs**, **static HTML** rendering. Python ≥3.11. Paper facts in `05-PAPER-FACTS.md`.
 
 ## 1. Module layout
 
 ```
 hermes/
-├── pyproject.toml               # project + deps + [project.scripts] hermes = "hermes.cli:main"
+├── pyproject.toml               # name `hermes`, deps below, [project.scripts] hermes = "hermes.cli:main"
 ├── docs/                        # these documents
 ├── runs/                        # scan outputs (gitignored)
 ├── src/hermes/
 │   ├── cli.py                   # argparse CLI (spec §6); thin — delegates to graph/report/eval
 │   ├── config.py                # HermesConfig dataclass: models, concurrency, budgets; env overrides
 │   ├── spec_loader.py           # load+validate Swagger2/OAS3, enumerate Operation records
-│   ├── reducer.py               # Operation -> ERD (spec §5): ref inlining, depth cap, token cap, YAML
+│   ├── reducer.py               # Operation -> ERD (spec §5): ref inlining, $unresolved markers, caps, YAML
 │   ├── smells/
-│   │   ├── catalog.py           # the 9 hardcoded Smell objects (id, category, definition, criteria)
-│   │   └── prompts/             # one file per smell: system prompt + few-shots; PROMPT_VERSION per file
+│   │   ├── catalog.py           # the 9 hardcoded Smell objects (id, category, display name, definition)
+│   │   └── prompts/             # one module per smell; Appendix-A template structure; PROMPT_VERSION each
 │   ├── llm.py                   # Anthropic client wrapper: structured output, retry, usage accounting
 │   ├── schemas/
 │   │   ├── finding.schema.json
-│   │   └── models.py            # Pydantic: Finding, Evidence, AgentResponse, EndpointVerdict
+│   │   └── models.py            # Pydantic: Finding, Suggestion, Extensions, AgentResponse, EndpointVerdict
 │   ├── graph.py                 # LangGraph StateGraph wiring (below)
 │   ├── nodes.py                 # node implementations (pure functions over state)
 │   ├── cache.py                 # sqlite content-hash cache
-│   ├── store.py                 # findings.jsonl / run.json persistence + loading
+│   ├── store.py                 # findings.jsonl / endpoints.jsonl / run.json persistence
 │   ├── report/
-│   │   ├── render.py            # findings -> report.html
+│   │   ├── render.py            # dashboard (template.html) + Appendix-C markdown per endpoint
 │   │   └── template.html        # single Jinja2 template, inline CSS/JS
 │   └── eval/
-│       ├── harness.py           # run detection over golden fixtures, compute metrics
-│       └── metrics.py           # per-smell precision/recall/F1
+│       ├── harness.py           # run detection over golden fixtures, score, gate
+│       └── metrics.py           # multi-label: Jaccard, F1-micro/macro, Hamming, cardinality diff; per-smell P/R
 └── tests/                       # see 02-TEST-PLAN.md
 ```
 
-Dependencies (keep minimal): `anthropic`, `langgraph`, `pydantic>=2`, `PyYAML`, `jinja2`, `prance` (optional, reuse repo convention for ref resolution — fall back to internal resolver if absent). Dev: `pytest`, `pytest-asyncio`.
+Dependencies (keep minimal): `anthropic`, `langgraph`, `pydantic>=2`, `PyYAML`, `jinja2`, `prance` (optional — fall back to internal resolver). Dev: `pytest`, `pytest-asyncio`.
 
-## 2. LangGraph design
+## 2. Smell catalog
+
+`smells/catalog.py` defines exactly **9** smells (spec §3): `LAZY`, `BLOATED`, `TANGLED`, `FRAGMENTED`, `EXCESS_STRUCTURED` (documentation) and `PATH_AND_METHOD`, `INPUT`, `RESPONSE`, `SECURITY` (rest). Each `Smell` carries: `id`, `category`, `display_name` (e.g. "Path & Method" for reports), `definition`, `scoping_rule` (the "Analyze ONLY …" clause), and `occurs_when` examples (the Appendix-A `{examples}` slot / few-shots). Fan-out per scan = |operations| × 9.
+
+## 3. LangGraph design
 
 One `StateGraph` per scan run.
 
@@ -61,77 +65,88 @@ load_spec ──> reduce ──> plan ──(Send fan-out)──> detect ──>
 ```
 
 - `load_spec`: parse spec, enumerate operations, apply `--tags/--paths/--sample` filters.
-- `reduce`: build ERD per operation (pure, deterministic — unit-testable without LLM).
-- `plan`: cross-product operations × 9 smells, minus cache hits (cache hits emit their stored findings directly into state).
-- `detect`: **map node via LangGraph `Send`** — one task per (endpoint, smell). Executes the smell agent (§3), validates output, writes to cache. Concurrency bounded by a semaphore in `llm.py` (default 8) rather than by the graph, so rate limits are respected regardless of fan-out size.
-- `collect`: group findings per endpoint.
-- `consolidate`: per endpoint with ≥2 findings, one Sonnet call (spec §8). Endpoints with 0–1 findings pass through with a rule-based verdict.
-- `persist`: append to `findings.jsonl` (idempotent by finding id), write `run.json` with usage/cost rollup.
+- `reduce`: build ERD per operation (pure, deterministic — unit-testable without LLM). Unresolvable refs become `$unresolved` markers (FRAGMENTED evidence), never exceptions.
+- `plan`: cross-product operations × 9 smells, minus cache hits (cache hits emit their stored results directly into state).
+- `detect`: **map node via LangGraph `Send`** — one task per (endpoint, smell). Executes the smell agent (§4), validates output, writes to cache. Concurrency bounded by a semaphore in `llm.py` (default 8), so rate limits are respected regardless of fan-out size.
+- `collect`: group detections per endpoint (this is the code half of the paper's "central Smell Detector Agent consolidates results" — it assembles the unified per-endpoint diagnostic report).
+- `consolidate` (extension, `--no-consolidate` to skip): per endpoint with ≥2 detections, one Sonnet call to normalize justifications and produce the endpoint verdict. Endpoints with 0–1 detections get a rule-based verdict.
+- `persist`: append to `findings.jsonl` / `endpoints.jsonl` (idempotent by id), write `run.json` with usage/cost rollup.
 - `render`: `report/render.py` → `report.html`.
 
 ### Checkpointing / resume
 
 - `langgraph.checkpoint.sqlite.SqliteSaver` at `runs/<run_id>/checkpoint.db`, `thread_id = run_id`.
-- `--resume` re-invokes the graph with the same `thread_id`; combined with the content-hash cache (below) this makes interruption cheap even if the checkpoint is coarse. **The cache is the primary resume mechanism; the checkpointer is belt-and-suspenders.** If SqliteSaver integration fights the Send API, it is acceptable to drop the checkpointer and rely on cache-only resume — record in DECISIONS.md.
+- `--resume` re-invokes with the same `thread_id`; the content-hash cache is the primary resume mechanism, the checkpointer is belt-and-suspenders. If SqliteSaver fights the Send API, drop it and rely on cache-only resume — record in DECISIONS.md.
 
-## 3. Smell agent (detect node internals)
+## 4. Smell agent (detect node internals)
 
 One LLM call per (endpoint, smell):
 
-- **Model:** `claude-haiku-4-5` (config: `HermesConfig.detect_model`).
-- **System prompt** (stable, cacheable): agent role + the smell's definition, classification criteria, severity rubric, 2–3 few-shot examples (input ERD fragment → expected JSON), and the output schema. Marked with `cache_control: {"type": "ephemeral"}` so the per-smell system prompt caches across the ~927 endpoint calls for that smell. **Keep it byte-stable — no timestamps/run ids in the system prompt.**
-- **User message:** the ERD.
-- **Structured output:** `client.messages.parse()` with a Pydantic `AgentResponse`:
+- **Model:** `claude-haiku-4-5` (config: `detect_model`).
+- **System prompt** (stable, cacheable — `cache_control: {"type": "ephemeral"}`, byte-stable, no timestamps/run ids): assembled per the paper's **Appendix A template**, in order:
+  1. Role ("You are an expert in identifying <Smell> …").
+  2. Smell Definition.
+  3. "This smell typically occurs when:" + the catalog's `occurs_when` examples (few-shot slot).
+  4. Task statement.
+  5. Classification Rules — including the smell's `scoping_rule` (e.g. LAZY: "Analyze ONLY the method summary and description") and detected/not-detected semantics.
+  6. Explanation and Improvement Rules — justification bullets as complete sentences, ≥120 chars total per section; suggestions with `action_title` in exact format `[<SMELL>] - <action title>`.
+- **User message:** the ERD (the Appendix-A `{openapi_json}` slot, as YAML).
+- **Structured output:** `client.messages.parse()` with Pydantic (replaces the paper's "return ONLY valid JSON" prose rule — same intent, mechanically enforced):
 
 ```python
-class AgentFinding(BaseModel):
-    summary: str
+class Suggestion(BaseModel):
+    action_title: str                 # "[LAZY] - Improve documentation"
+    description: str
+
+class Extensions(BaseModel):
     severity: Literal["low", "medium", "high"]
     confidence: float
-    evidence: list[Evidence]          # location + excerpt
-    justification: str
-    suggestion: str
+    evidence: list[Evidence]          # location dot-path + excerpt
 
 class AgentResponse(BaseModel):
     smell_detected: bool
-    findings: list[AgentFinding]      # empty when smell_detected is false
+    justification: list[str]          # empty when not detected
+    suggestions: list[Suggestion]     # empty when not detected
+    extensions: Extensions | None     # required when detected
 ```
 
-- `max_tokens`: 2000. No `temperature` (omit sampling params).
-- **Retry policy:** SDK default retries for 429/5xx; one additional application-level retry on schema-validation failure with the validation error appended to the user message. After that, record a `detector_error` entry in `run.json` and continue (never abort the scan for one endpoint).
-- Post-validation in code (not trusted from the model): clamp confidence to [0,1]; drop findings with empty evidence; compute deterministic `id`; stamp `detector` metadata.
+- `max_tokens`: 2000. Omit sampling params.
+- **Retry policy:** SDK default retries for 429/5xx; one application-level retry on schema-validation failure with the validation error appended. Then record `detector_error` in `run.json` and continue — never abort the scan for one endpoint.
+- Post-validation in code: clamp confidence to [0,1]; enforce/repair the `[<SMELL>] - ` action-title prefix; enforce ≥120-char justification total (below threshold → one retry, then accept with `short_justification: true` flag); compute deterministic `id`; stamp `detector` metadata.
 
-### Consolidator agent
+### Consolidator agent (extension)
 
 - **Model:** `claude-sonnet-5` (config: `consolidate_model`).
-- Input: the endpoint's ERD summary (path/method/tags only) + its findings as JSON.
-- Output (parse): list of finding ids to keep/merge/drop with reasons + optional severity adjustments + endpoint verdict. Applied in code; original findings retained in `findings.raw.jsonl` for audit.
+- Input: endpoint path/method/tags + its detections as JSON. Output (parse): normalization edits + endpoint verdict. Applied in code; raw agent outputs retained in `findings.raw.jsonl` for audit. May not invent detections.
 
-## 4. Caching
+### Model choice (recorded deviation)
 
-sqlite table `cache(key TEXT PRIMARY KEY, response_json TEXT, model TEXT, created_at TEXT)` at `runs/cache.db` (shared across runs, keyed by content — safe because key includes everything that affects output):
+The paper selected **gpt-oss:120b** after a 7-model local bake-off because confidentiality policy barred external APIs (see 05-PAPER-FACTS §1). Our target spec is a public demo spec, so we use the Claude API for detection quality and reliable structured output; the `llm.py` seam keeps a future local/pluggable backend cheap to add. Logged in DECISIONS.md.
+
+## 5. Caching
+
+sqlite table `cache(key TEXT PRIMARY KEY, response_json TEXT, model TEXT, created_at TEXT)` at `runs/cache.db` (shared across runs — safe because the key includes everything that affects output):
 
 ```
 key = sha256(erd_yaml + smell_id + PROMPT_VERSION[smell] + model_id)
 ```
 
-- Hit → stored `AgentResponse` JSON replayed, zero API calls, marked `"cached": true` in usage records.
-- A prompt edit bumps that smell's `PROMPT_VERSION`, naturally invalidating only that smell's entries.
+- Hit → stored `AgentResponse` replayed, zero API calls, `"cached": true` in usage records.
+- A prompt edit bumps that smell's `PROMPT_VERSION`, invalidating only that smell's entries.
 - `hermes scan --no-cache` bypasses reads (still writes).
 
-## 5. Cost & rate control
+## 6. Cost & rate control
 
-- `hermes estimate` and the pre-scan confirmation compute: `calls = |operations| × 9 + |operations with ≥2 findings|(est. 60%)`; input tokens ≈ ERD tokens + cached system prompt (cache-read priced); output ≈ 400/call. With Haiku 4.5 at $1/$5 per MTok and prompt caching, a full 927-operation BaNCS scan is ~8.4k calls, order of **$15–30**; print the computed number, not this constant.
-- Semaphore concurrency 8 default; on `RateLimitError` the SDK backs off — additionally halve the semaphore for 60s (simple adaptive throttle).
-- `--max-endpoints` and `--sample N --seed S` (stratified by tag when possible) for cheap partial scans.
-- Usage accounting: every call appends `UsageRecord(model, input_tokens, output_tokens, cache_read_input_tokens, cost_usd)` from `response.usage`; `run.json` carries the rollup. Cost table (Haiku $1/$5, Sonnet $3/$15 per MTok) lives in `config.py` with a comment that prices drift.
+- `hermes estimate` and the pre-scan confirmation compute: `calls = |operations| × 9 + est. consolidations`; input ≈ ERD tokens + cache-read system prompt; output ≈ 400/call. Full 927-operation BaNCS scan ≈ 8.4k calls, order of **$15–30** with Haiku 4.5 ($1/$5 per MTok) + prompt caching; print the computed number, not this constant.
+- Semaphore concurrency 8 default; on `RateLimitError` additionally halve concurrency for 60s.
+- `--max-endpoints`, `--sample N --seed S` (stratified by tag when possible) for cheap partial scans.
+- Usage accounting: every call appends `UsageRecord(model, input_tokens, output_tokens, cache_read_input_tokens, cost_usd)` from `response.usage`; `run.json` carries the rollup. Price table (Haiku $1/$5, Sonnet $3/$15 per MTok) lives in `config.py` with a drift comment.
 
-## 6. Report rendering
+## 7. Report rendering
 
-- Pure function: `render(run_dir) -> report.html`. Jinja2 template, findings embedded as JSON, vanilla JS for filter/sort/paginate (page size 100). No network fetches; must pass a test that greps the output for `http://`/`https://` in src/href attributes (none allowed except inside finding text).
-- Keep JS small and dependency-free; correctness over polish.
+- Pure function: `render(run_dir) -> report.html`; `render_endpoint_md(run_dir, endpoint_key) -> str` for the Appendix-C markdown format (spec §7.1). Jinja2 template, findings embedded as JSON, vanilla JS filter/sort/paginate (page size 100). No network fetches — test greps output for `http(s)://` in src/href (none allowed except inside finding text).
 
-## 7. Error handling philosophy
+## 8. Error handling philosophy
 
 - Spec-level failures (unparseable file) fail fast with exit 2.
 - Per-endpoint failures (ref bomb, oversized ERD, agent schema failure after retry) degrade to recorded warnings; the scan always completes and the report shows a "skipped/errored" section.
