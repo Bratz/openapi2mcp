@@ -112,7 +112,7 @@ Behavior requirements:
 - `scan` prints an upfront estimate (endpoints, LLM calls = ops × 9 + consolidations, approximate cost) and requires `--yes` or interactive confirmation before spending money.
 - `scan` writes `runs/<run_id>/findings.jsonl`, `endpoints.jsonl` (per-endpoint smell-set + verdict), `run.json` (config, counts, token usage, cost), `report.html`.
 - `--resume` continues an interrupted run via the content-hash cache (01-ARCHITECTURE §4).
-- Exit codes: 0 success; 2 spec parse failure; 3 interrupted (resumable); 4 budget/confirmation declined.
+- Exit codes: 0 success; 2 invalid invocation or spec parse failure (argparse usage errors share this code); 3 interrupted (resumable); 4 budget/confirmation declined.
 
 ## 7. Reports
 

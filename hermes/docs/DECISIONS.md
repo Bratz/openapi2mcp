@@ -21,4 +21,10 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
-(append below)
+### 2026-07-04 — M0 (from milestone review)
+
+- **Exit code 2 covers argparse usage errors as well as spec parse failures.** argparse exits 2 on bad flags by design; remapping it buys nothing. 00-SPEC §6 updated.
+- **CLI flag defaults that the spec assigns values (concurrency 8, seed 42, out runs/) parse as `None`** and are resolved by `HermesConfig` (M4), so env overrides can distinguish "not given" from an explicit value.
+- **`commands.py` added to the architecture layout** as a thin arg→module adapter layer; real logic stays in graph/report/eval per 01-ARCHITECTURE.
+- **Version single-sourced** in `hermes.__version__` via `[tool.setuptools.dynamic]`.
+- **Test dirs are packages** (`__init__.py` in tests/, tests/unit/, tests/integration/) to prevent pytest import-file-mismatch collisions; integration has a placeholder smoke test until M5 so the must-pass command collects on fresh clones.

@@ -10,7 +10,8 @@ hermes/
 ├── docs/                        # these documents
 ├── runs/                        # scan outputs (gitignored)
 ├── src/hermes/
-│   ├── cli.py                   # argparse CLI (spec §6); thin — delegates to graph/report/eval
+│   ├── cli.py                   # argparse CLI (spec §6); import-light, dispatches to commands.py
+│   ├── commands.py              # thin arg→module adapters; real logic lives in graph/report/eval
 │   ├── config.py                # HermesConfig dataclass: models, concurrency, budgets; env overrides
 │   ├── spec_loader.py           # load+validate Swagger2/OAS3, enumerate Operation records
 │   ├── reducer.py               # Operation -> ERD (spec §5): ref inlining, $unresolved markers, caps, YAML
