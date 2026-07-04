@@ -23,7 +23,7 @@ Location: `tests/fixtures/golden/`.
 A hand-authored Swagger 2.0 spec, fictional "Atlas Retail Banking API", **40 operations** across 4 tags. Composition:
 
 - **8 clean operations** — deliberately well-documented, correct REST design, full security definitions. Expected label set: empty. These are the false-positive controls. Include acceptable-lookalikes here (e.g. a genuinely appropriate POST `/accounts/search` that must NOT be flagged PATH_AND_METHOD).
-- **32 seeded operations** — each seeded with 1–3 smells (~55 seeded instances total), covering **every one of the 9 smells at least 4 times**, including at least one *subtle* instance per smell. Mandatory seeds for the two structural smells:
+- **32 seeded operations** — most seeded with 1–3 smells (the Appendix-B clone carries 5; ~50 seeded instances total), covering **every one of the 9 smells at least 4 times**, including at least one *subtle* instance per smell. Mandatory seeds for the two structural smells:
   - `FRAGMENTED`: at least one operation whose response/body `$ref` points to a definition that does not exist in the document (paper Table 3's operationalization).
   - `EXCESS_STRUCTURED`: at least one `description` containing an embedded class-like/JSON-schema-like definition in the prose.
   - Also include the paper's Appendix B anti-pattern at least once: `GET /orders/createNewOrder`-style verb path + wrong method + `GenericResponse {status, data: object}` (should light up PATH_AND_METHOD, RESPONSE, LAZY, INPUT, SECURITY like the paper's sample report).

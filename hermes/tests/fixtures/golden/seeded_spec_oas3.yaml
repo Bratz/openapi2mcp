@@ -1,0 +1,224 @@
+# Golden fixture: Atlas Merchant Services API (fictional), OpenAPI 3.0.
+# 6 operations: 2 clean controls + 4 seeded. Locks in OAS3 support.
+# Labels live in expected.json alongside the Swagger 2.0 fixture's.
+# FROZEN after M6 baseline — changes require re-recording eval responses (see docs/02-TEST-PLAN.md §2.3).
+openapi: 3.0.0
+info:
+  title: Atlas Merchant Services API
+  version: "2.1.0"
+  description: Merchant onboarding and settlement operations for Atlas acquiring.
+servers:
+  - url: https://merchant.atlasbank.example/v2
+tags:
+  - name: Merchants
+    description: Merchant lifecycle and settlement.
+security: []
+paths:
+  # ── clean controls ──
+  /merchants/{merchantId}:
+    get:
+      tags: [Merchants]
+      operationId: getMerchant
+      summary: Fetch one merchant by identifier
+      description: >
+        Returns the merchant with onboarding state and settlement configuration.
+        merchantId is the 12-character alphanumeric identifier assigned at onboarding.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: {type: string, pattern: "^[A-Z0-9]{12}$"}
+          description: 12-character merchant identifier.
+      responses:
+        "200":
+          description: The merchant resource.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Merchant"}
+        "404":
+          description: Unknown merchant identifier.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /merchants:
+    post:
+      tags: [Merchants]
+      operationId: onboardMerchant
+      summary: Onboard a new merchant
+      description: >
+        Creates a merchant record and starts underwriting. Returns 201 with the merchant
+        in state UNDERWRITING; poll the resource until ACTIVE before submitting
+        transactions. Idempotent per Idempotency-Key header.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+          description: Client-generated UUID; identical retries return the original response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/OnboardMerchantRequest"}
+      responses:
+        "201":
+          description: Merchant created in state UNDERWRITING.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Merchant"}
+        "400":
+          description: Validation failure; message names the offending field.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  # ── seeded ──
+  /merchants/{merchantId}/payouts:
+    get:
+      tags: [Merchants]
+      operationId: listPayouts
+      summary: Get data                        # SEEDED: LAZY — generic summary, no description
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: {type: string}
+          description: Merchant identifier.
+      responses:
+        "200":
+          description: Payouts for the merchant.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PayoutList"}
+        "404":
+          description: Unknown merchant identifier.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /merchants/{merchantId}/settle:
+    get:                                       # SEEDED: PATH_AND_METHOD — verb path segment + GET triggers a settlement (state change)
+      tags: [Merchants]
+      operationId: triggerSettlement
+      summary: Trigger an out-of-cycle settlement for a merchant
+      description: >
+        Starts an immediate settlement run for the merchant outside the nightly cycle.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: {type: string}
+          description: Merchant identifier.
+      responses:
+        "200":                                 # SEEDED: RESPONSE — 200 generic envelope for an async state-changing action, no error contract
+          description: Success
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GenericResponse"}
+  /merchants/{merchantId}/fees:
+    get:
+      tags: [Merchants]
+      operationId: getMerchantFees
+      summary: Fetch the fee schedule for a merchant
+      description: >
+        Returns the merchant's negotiated fee schedule per card scheme and channel.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: {type: string}
+          description: Merchant identifier.
+      responses:
+        "200":
+          description: The fee schedule.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/FeeSchedule"}   # SEEDED: FRAGMENTED — FeeSchedule is never defined in components
+        "404":
+          description: Unknown merchant identifier.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+  /merchants/{merchantId}/terminals:
+    post:
+      tags: [Merchants]
+      operationId: registerTerminal
+      summary: Register a payment terminal
+      description: Registers a terminal.       # SEEDED: LAZY — description restates the summary, no semantics
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: merchantId
+          in: path
+          required: true
+          schema: {type: string}
+          description: Merchant identifier.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:                      # SEEDED: INPUT — type-only fields, cryptic names, required not marked
+                tid: {type: string}
+                mdl: {type: string}
+                loc: {type: string}
+      responses:
+        "201":
+          description: Terminal registered.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Terminal"}
+        "400":
+          description: Terminal model not certified for this merchant's region.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Error"}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token from the Atlas identity service; scope "merchant.rw".
+  schemas:
+    Merchant:
+      type: object
+      required: [merchantId, state]
+      properties:
+        merchantId: {type: string, description: 12-character merchant identifier.}
+        state: {type: string, enum: [UNDERWRITING, ACTIVE, SUSPENDED, CLOSED], description: Lifecycle state.}
+        legalName: {type: string, description: Registered legal name.}
+    OnboardMerchantRequest:
+      type: object
+      required: [legalName, country, mcc]
+      properties:
+        legalName: {type: string, description: Registered legal name.}
+        country: {type: string, description: ISO 3166-1 alpha-2 country of registration.}
+        mcc: {type: string, pattern: "^[0-9]{4}$", description: 4-digit merchant category code.}
+    PayoutList:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              amount: {type: number, description: Payout amount.}
+              settledOn: {type: string, format: date, description: Settlement date.}
+    Terminal:
+      type: object
+      properties:
+        terminalId: {type: string, description: Assigned terminal identifier.}
+    GenericResponse:
+      type: object
+      properties:
+        status: {type: string, example: success}
+        data: {type: object}
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, description: Machine-readable error code.}
+        message: {type: string, description: Human-readable explanation.}

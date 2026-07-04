@@ -1,0 +1,361 @@
+{
+  "_comment": "Multi-label ground truth per operationId for both golden fixtures (docs/02-TEST-PLAN.md \u00a72.2). Scoring uses ONLY the smells arrays; notes are debug aids. FROZEN after M6 baseline \u2014 label changes require re-recording eval responses and a DECISIONS.md entry.",
+  "listAccounts": {
+    "smells": []
+  },
+  "createAccount": {
+    "smells": []
+  },
+  "getAccount": {
+    "smells": []
+  },
+  "searchAccounts": {
+    "smells": []
+  },
+  "getCustomer": {
+    "smells": []
+  },
+  "updateCustomerAddress": {
+    "smells": []
+  },
+  "getPayment": {
+    "smells": []
+  },
+  "releaseCollateral": {
+    "smells": []
+  },
+  "getAccountBalance": {
+    "smells": [
+      "LAZY"
+    ],
+    "notes": {
+      "LAZY": "generic 2-word summary, no description"
+    }
+  },
+  "getAccountTransactions": {
+    "smells": [
+      "LAZY",
+      "INPUT"
+    ],
+    "notes": {
+      "LAZY": "summary restates operationId",
+      "INPUT": "frm/to cryptic, undocumented"
+    }
+  },
+  "initiatePayment": {
+    "smells": [
+      "LAZY",
+      "RESPONSE",
+      "SECURITY"
+    ],
+    "notes": {
+      "LAZY": "no description",
+      "RESPONSE": "200-only GenericResponse",
+      "SECURITY": "userId header, no scheme"
+    }
+  },
+  "getLoanDetails": {
+    "smells": [
+      "LAZY",
+      "PATH_AND_METHOD"
+    ],
+    "notes": {
+      "LAZY": "vague summary/description",
+      "PATH_AND_METHOD": "verb path, id in query"
+    }
+  },
+  "updateCustomerStatus": {
+    "smells": [
+      "PATH_AND_METHOD",
+      "INPUT"
+    ],
+    "notes": {
+      "PATH_AND_METHOD": "verb path + POST for update",
+      "INPUT": "cust/sts/rsn type-only, required unmarked"
+    }
+  },
+  "createRefund": {
+    "smells": [
+      "LAZY",
+      "PATH_AND_METHOD",
+      "INPUT",
+      "RESPONSE",
+      "SECURITY"
+    ],
+    "notes": {
+      "_": "Appendix-B clone: GET-for-create verb path, card fields untyped, GenericResponse, no auth"
+    }
+  },
+  "updateAccountConfig": {
+    "smells": [
+      "LAZY",
+      "INPUT"
+    ],
+    "notes": {
+      "LAZY": "subtle: long but circular/content-free wording",
+      "INPUT": "odLmt/stmtFrq/chnlFlg opaque"
+    }
+  },
+  "listCustomers": {
+    "smells": [
+      "INPUT"
+    ],
+    "notes": {
+      "INPUT": "q/flt/lmt cryptic, wrong types"
+    }
+  },
+  "applyForLoan": {
+    "smells": [
+      "RESPONSE",
+      "SECURITY"
+    ],
+    "notes": {
+      "RESPONSE": "success and rejection share one 200 schema",
+      "SECURITY": "references undefined scheme 'oauth'"
+    }
+  },
+  "getRepaymentSchedule": {
+    "smells": [
+      "RESPONSE"
+    ],
+    "notes": {
+      "RESPONSE": "200 with no schema"
+    }
+  },
+  "cancelPayment": {
+    "smells": [
+      "RESPONSE"
+    ],
+    "notes": {
+      "RESPONSE": "bare OK 200, missing documented failure modes"
+    }
+  },
+  "getStatement": {
+    "smells": [
+      "INPUT"
+    ],
+    "notes": {
+      "INPUT": "typ magic values never enumerated"
+    }
+  },
+  "onboardCustomer": {
+    "smells": [
+      "SECURITY",
+      "INPUT"
+    ],
+    "notes": {
+      "SECURITY": "entity/userId ad-hoc auth headers, no scheme",
+      "INPUT": "nothing required, dob format unstated"
+    }
+  },
+  "listLoans": {
+    "smells": [
+      "SECURITY"
+    ],
+    "notes": {
+      "SECURITY": "description demands session token, no scheme referenced"
+    }
+  },
+  "updateLoanTerms": {
+    "smells": [
+      "TANGLED"
+    ],
+    "notes": {
+      "TANGLED": "auth + business rules + error handling + changelog in one description"
+    }
+  },
+  "submitPaymentBatch": {
+    "smells": [
+      "BLOATED",
+      "TANGLED"
+    ],
+    "notes": {
+      "BLOATED": "marketing filler",
+      "TANGLED": "auth advice + support escalation mixed in"
+    }
+  },
+  "getCustomerHistory": {
+    "smells": [
+      "BLOATED"
+    ],
+    "notes": {
+      "BLOATED": "repeats the same fact in different words"
+    }
+  },
+  "blockAccount": {
+    "smells": [
+      "TANGLED"
+    ],
+    "notes": {
+      "TANGLED": "fraud policy, legal citations, routing, entitlements in one blob"
+    }
+  },
+  "listPayments": {
+    "smells": [
+      "BLOATED",
+      "TANGLED"
+    ],
+    "notes": {
+      "BLOATED": "duplicated boilerplate paragraph",
+      "TANGLED": "support escalation + retention policy mixed in"
+    }
+  },
+  "getAccountLimits": {
+    "smells": [
+      "BLOATED",
+      "INPUT"
+    ],
+    "notes": {
+      "BLOATED": "subtle: every sentence is filler/restatement",
+      "INPUT": "chn channel codes never listed"
+    }
+  },
+  "getCustomerPreferences": {
+    "smells": [
+      "FRAGMENTED"
+    ],
+    "notes": {
+      "FRAGMENTED": "CustomerPreferences $ref never defined"
+    }
+  },
+  "recordRepayment": {
+    "smells": [
+      "FRAGMENTED",
+      "RESPONSE"
+    ],
+    "notes": {
+      "FRAGMENTED": "RepaymentRequest $ref never defined",
+      "RESPONSE": "GenericResponse, no errors"
+    }
+  },
+  "getDischargeSummary": {
+    "smells": [
+      "FRAGMENTED"
+    ],
+    "notes": {
+      "FRAGMENTED": "DischargeSummary $ref never defined"
+    }
+  },
+  "overridePaymentStatus": {
+    "smells": [
+      "FRAGMENTED"
+    ],
+    "notes": {
+      "FRAGMENTED": "PaymentStatusOverride $ref never defined"
+    }
+  },
+  "getAccountSummary": {
+    "smells": [
+      "EXCESS_STRUCTURED"
+    ],
+    "notes": {
+      "EXCESS_STRUCTURED": "JSON class definition embedded in description"
+    }
+  },
+  "attachCustomerDocument": {
+    "smells": [
+      "EXCESS_STRUCTURED"
+    ],
+    "notes": {
+      "EXCESS_STRUCTURED": "field-by-field pseudo-schema table in description"
+    }
+  },
+  "getLoanSummary": {
+    "smells": [
+      "EXCESS_STRUCTURED"
+    ],
+    "notes": {
+      "EXCESS_STRUCTURED": "TypeScript interface pasted in description"
+    }
+  },
+  "calculatePaymentFees": {
+    "smells": [
+      "EXCESS_STRUCTURED"
+    ],
+    "notes": {
+      "EXCESS_STRUCTURED": "XML schema fragment embedded in description"
+    }
+  },
+  "paymentStatusCheck": {
+    "smells": [
+      "LAZY",
+      "PATH_AND_METHOD"
+    ],
+    "notes": {
+      "LAZY": "2-word summary, no description",
+      "PATH_AND_METHOD": "action segment paymentStatusCheck"
+    }
+  },
+  "deleteAccount": {
+    "smells": [
+      "PATH_AND_METHOD",
+      "INPUT",
+      "RESPONSE"
+    ],
+    "notes": {
+      "PATH_AND_METHOD": "verb path + POST for delete",
+      "INPUT": "acct/rsnCd codes unenumerated",
+      "RESPONSE": "bare OK for irreversible op"
+    }
+  },
+  "getRiskScore": {
+    "smells": [
+      "PATH_AND_METHOD"
+    ],
+    "notes": {
+      "PATH_AND_METHOD": "subtle: correct method, verb embedded in path"
+    }
+  },
+  "closeLoan": {
+    "smells": [
+      "RESPONSE",
+      "SECURITY"
+    ],
+    "notes": {
+      "RESPONSE": "no schema/error contract",
+      "SECURITY": "description says admin-only, no scheme"
+    }
+  },
+  "getMerchant": {
+    "smells": []
+  },
+  "onboardMerchant": {
+    "smells": []
+  },
+  "listPayouts": {
+    "smells": [
+      "LAZY"
+    ],
+    "notes": {
+      "LAZY": "generic summary, no description"
+    }
+  },
+  "triggerSettlement": {
+    "smells": [
+      "PATH_AND_METHOD",
+      "RESPONSE"
+    ],
+    "notes": {
+      "PATH_AND_METHOD": "verb path + GET causes state change",
+      "RESPONSE": "generic envelope, no error contract"
+    }
+  },
+  "getMerchantFees": {
+    "smells": [
+      "FRAGMENTED"
+    ],
+    "notes": {
+      "FRAGMENTED": "FeeSchedule $ref never defined in components"
+    }
+  },
+  "registerTerminal": {
+    "smells": [
+      "LAZY",
+      "INPUT"
+    ],
+    "notes": {
+      "LAZY": "description restates summary",
+      "INPUT": "tid/mdl/loc type-only, required unmarked"
+    }
+  }
+}

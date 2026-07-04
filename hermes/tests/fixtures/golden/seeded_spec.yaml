@@ -1,0 +1,1289 @@
+# Golden fixture: Atlas Retail Banking API (fictional), Swagger 2.0.
+# 40 operations across 4 tags: 8 clean controls + 32 seeded with smells.
+# Every seeded smell instance is marked with a "# SEEDED: <SMELL> — why" comment.
+# Ground-truth labels live in expected.json (multi-label per operationId).
+# FROZEN after M6 baseline — changes require re-recording eval responses (see docs/02-TEST-PLAN.md §2.3).
+swagger: "2.0"
+info:
+  title: Atlas Retail Banking API
+  version: "1.4.0"
+  description: >
+    Retail banking operations for the fictional Atlas Bank: accounts, payments,
+    customers, and loans. All endpoints require a Bearer token obtained from the
+    Atlas identity service unless stated otherwise.
+host: api.atlasbank.example
+basePath: /v1
+schemes: [https]
+consumes: [application/json]
+produces: [application/json]
+tags:
+  - name: Accounts
+    description: Deposit account lifecycle, balances, statements, and account-level controls.
+  - name: Payments
+    description: Payment initiation, tracking, and refunds.
+  - name: Customers
+    description: Customer profiles, KYC, and preferences.
+  - name: Loans
+    description: Loan origination, servicing, and collateral.
+securityDefinitions:
+  bearerAuth:
+    type: apiKey
+    name: Authorization
+    in: header
+    description: >
+      Bearer token issued by the Atlas identity service. Obtain via POST /oauth/token
+      with client credentials; pass as "Authorization: Bearer <token>". Tokens expire
+      after 3600 seconds; renew with the refresh grant. Scope "retail.read" is needed
+      for GET operations, "retail.write" for mutations.
+
+paths:
+  # ───────────────────────── CLEAN CONTROLS (8) ─────────────────────────
+  /accounts:
+    get:
+      tags: [Accounts]
+      operationId: listAccounts
+      summary: List deposit accounts visible to the caller
+      description: >
+        Returns the deposit accounts the authenticated principal may view, ordered by
+        creation date descending. Use the cursor from the response to page; page size
+        defaults to 25 and is capped at 100. Closed accounts are included only when
+        includeClosed=true.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: cursor
+          in: query
+          type: string
+          required: false
+          description: Opaque paging cursor from a previous response. Omit for the first page.
+        - name: pageSize
+          in: query
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 100
+          default: 25
+          required: false
+          description: Number of accounts per page (1-100, default 25).
+        - name: includeClosed
+          in: query
+          type: boolean
+          default: false
+          required: false
+          description: When true, closed accounts are included in the result.
+      responses:
+        "200":
+          description: A page of accounts with an optional next-page cursor.
+          schema: {$ref: "#/definitions/AccountList"}
+        "401":
+          description: Missing or expired Bearer token.
+          schema: {$ref: "#/definitions/Error"}
+    post:
+      tags: [Accounts]
+      operationId: createAccount
+      summary: Open a new deposit account
+      description: >
+        Opens a deposit account for an existing customer. The customer must have passed
+        KYC (status ACTIVE). On success returns the new account with its IBAN. Idempotent
+        per Idempotency-Key header: retries with the same key return the original result.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          type: string
+          required: true
+          description: Client-generated UUID; identical retries return the original response.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/CreateAccountRequest"}
+      responses:
+        "201":
+          description: Account created; body contains the full account resource.
+          schema: {$ref: "#/definitions/Account"}
+        "400":
+          description: Validation failure; the message names the offending field.
+          schema: {$ref: "#/definitions/Error"}
+        "409":
+          description: Customer is not KYC-ACTIVE or account limit reached.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/{accountId}:
+    get:
+      tags: [Accounts]
+      operationId: getAccount
+      summary: Fetch one account by identifier
+      description: >
+        Returns the account resource including status, currency, and current available
+        balance. accountId is the 10-digit Atlas account number, not the IBAN.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          pattern: "^[0-9]{10}$"
+          required: true
+          description: 10-digit Atlas account number (e.g. 4001234567).
+      responses:
+        "200":
+          description: The account resource.
+          schema: {$ref: "#/definitions/Account"}
+        "404":
+          description: No account with this identifier is visible to the caller.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/search:
+    post:
+      tags: [Accounts]
+      operationId: searchAccounts
+      summary: Search accounts with a structured filter
+      description: >
+        Complex account search. POST is used deliberately because filters can exceed
+        URL length limits (e.g. lists of account states and IBAN prefixes). Returns at
+        most 200 matches ordered by relevance; narrow the filter if the result is capped.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/AccountSearchRequest"}
+      responses:
+        "200":
+          description: Accounts matching every provided filter clause (logical AND).
+          schema: {$ref: "#/definitions/AccountList"}
+        "400":
+          description: Filter is syntactically invalid; message names the clause.
+          schema: {$ref: "#/definitions/Error"}
+  /customers/{customerId}:
+    get:
+      tags: [Customers]
+      operationId: getCustomer
+      summary: Fetch one customer profile
+      description: >
+        Returns the customer profile with KYC status and contact details. customerId is
+        the 8-digit customer number printed on correspondence.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: customerId
+          in: path
+          type: string
+          pattern: "^[0-9]{8}$"
+          required: true
+          description: 8-digit Atlas customer number.
+      responses:
+        "200":
+          description: The customer profile.
+          schema: {$ref: "#/definitions/Customer"}
+        "404":
+          description: Unknown customer number.
+          schema: {$ref: "#/definitions/Error"}
+  /customers/{customerId}/address:
+    put:
+      tags: [Customers]
+      operationId: updateCustomerAddress
+      summary: Replace the customer's registered address
+      description: >
+        Replaces the registered postal address. The full address object is required (PUT
+        semantics); omitted optional fields are cleared. Address changes trigger a
+        confirmation letter to both old and new addresses.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: customerId
+          in: path
+          type: string
+          pattern: "^[0-9]{8}$"
+          required: true
+          description: 8-digit Atlas customer number.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/Address"}
+      responses:
+        "200":
+          description: Updated customer profile reflecting the new address.
+          schema: {$ref: "#/definitions/Customer"}
+        "400":
+          description: Address failed postal validation; message names the field.
+          schema: {$ref: "#/definitions/Error"}
+        "404":
+          description: Unknown customer number.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/{paymentId}:
+    get:
+      tags: [Payments]
+      operationId: getPayment
+      summary: Fetch one payment by identifier
+      description: >
+        Returns the payment with its current state (PENDING, SETTLED, RETURNED, FAILED)
+        and the settlement timestamp when settled. paymentId is the UUID returned at
+        initiation.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: paymentId
+          in: path
+          type: string
+          format: uuid
+          required: true
+          description: Payment UUID from the initiation response.
+      responses:
+        "200":
+          description: The payment resource.
+          schema: {$ref: "#/definitions/Payment"}
+        "404":
+          description: Unknown payment id.
+          schema: {$ref: "#/definitions/Error"}
+    delete:
+      tags: [Payments]
+      operationId: cancelPayment
+      summary: Cancel a pending payment
+      description: >
+        Cancels a payment that has not yet settled. Settled payments cannot be cancelled;
+        initiate a refund instead.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: paymentId
+          in: path
+          type: string
+          format: uuid
+          required: true
+          description: Payment UUID from the initiation response.
+      responses:
+        "200":                                 # SEEDED: RESPONSE — only "OK" 200, no schema, no 404/409 for the documented failure modes
+          description: OK
+  /loans/{loanId}/collateral/{collateralId}:
+    delete:
+      tags: [Loans]
+      operationId: releaseCollateral
+      summary: Release one collateral item from a loan
+      description: >
+        Releases the collateral item and schedules the lien removal. Only permitted when
+        the remaining collateral still satisfies the loan-to-value policy; otherwise 409
+        with the minimum required collateral value in the message.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          pattern: "^LN[0-9]{8}$"
+          required: true
+          description: Loan number in LN######## format.
+        - name: collateralId
+          in: path
+          type: string
+          required: true
+          description: Collateral identifier from the loan's collateral list.
+      responses:
+        "204":
+          description: Collateral released; no body.
+        "404":
+          description: Loan or collateral item not found.
+          schema: {$ref: "#/definitions/Error"}
+        "409":
+          description: Release would breach the loan-to-value policy.
+          schema: {$ref: "#/definitions/Error"}
+
+  # ───────────────────────── SEEDED OPERATIONS (32) ─────────────────────────
+  /accounts/{accountId}/balance:
+    get:
+      tags: [Accounts]
+      operationId: getAccountBalance
+      summary: Get data                       # SEEDED: LAZY — generic 2-word summary, no description
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+      responses:
+        "200":
+          description: Balance for the account, split into booked and available amounts.
+          schema: {$ref: "#/definitions/Balance"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/{accountId}/transactions:
+    get:
+      tags: [Accounts]
+      operationId: getAccountTransactions
+      summary: Get account transactions       # SEEDED: LAZY — summary restates operationId, description redundant
+      description: Gets the transactions of the account.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+        - name: frm                            # SEEDED: INPUT — cryptic name, type-only, no format/semantics
+          in: query
+          type: string
+          required: false
+        - name: to                             # SEEDED: INPUT — ambiguous, no date format documented
+          in: query
+          type: string
+          required: false
+      responses:
+        "200":
+          description: Transactions in the requested window, newest first.
+          schema: {$ref: "#/definitions/TransactionList"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /payments:
+    post:
+      tags: [Payments]
+      operationId: initiatePayment
+      summary: Initiate payment                # SEEDED: LAZY — no description at all
+      parameters:
+        - name: userId                         # SEEDED: SECURITY — auth-bearing header param, but no security scheme referenced
+          in: header
+          type: string
+          required: true
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/PaymentRequest"}
+      responses:
+        "200":                                 # SEEDED: RESPONSE — 200 for creation, generic {status,data} envelope, no error responses
+          description: Success
+          schema: {$ref: "#/definitions/GenericResponse"}
+  /loans/getLoanDetails:
+    get:
+      tags: [Loans]
+      operationId: getLoanDetails
+      summary: Loan details                    # SEEDED: LAZY — vague summary, description adds nothing
+      description: Returns details.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId                         # SEEDED (path): verb-oriented URI /loans/getLoanDetails with id in query
+          in: query
+          type: string
+          required: true
+          description: Loan number.
+      responses:
+        "200":
+          description: The loan resource.
+          schema: {$ref: "#/definitions/Loan"}
+        "404":
+          description: Unknown loan.
+          schema: {$ref: "#/definitions/Error"}
+      # SEEDED: PATH_AND_METHOD — action-oriented path (verb "get" embedded), resource id via query instead of path
+  /customers/updateCustomerStatus:
+    post:                                      # SEEDED: PATH_AND_METHOD — verb in path + POST used for an update (PUT/PATCH territory)
+      tags: [Customers]
+      operationId: updateCustomerStatus
+      summary: Update the KYC status of a customer
+      description: >
+        Sets the customer's KYC status. Allowed transitions are governed by the KYC
+        state machine; illegal transitions return 409.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object                       # SEEDED: INPUT — inline body, type-only fields, required not marked, no enums
+            properties:
+              cust: {type: string}
+              sts: {type: string}
+              rsn: {type: string}
+      responses:
+        "200":
+          description: Updated customer profile.
+          schema: {$ref: "#/definitions/Customer"}
+        "409":
+          description: Illegal KYC state transition.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/createRefund:
+    get:                                       # SEEDED: PATH_AND_METHOD — Appendix-B clone: GET for resource creation + verb path
+      tags: [Payments]
+      operationId: createRefund
+      summary: Create refund                   # SEEDED: LAZY — bare 2-word summary, no description
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:                        # SEEDED: INPUT — card fields type-only, no formats, required incomplete
+              payment_id: {type: string}
+              amount: {type: string}
+              card_number: {type: string, example: "4111111111111111"}
+              card_holder: {type: string}
+            required: [payment_id]
+      responses:
+        "200":                                 # SEEDED: RESPONSE — 200 for creation, GenericResponse {status,data:object}, no errors
+          description: Success
+          schema: {$ref: "#/definitions/GenericResponse"}
+      # SEEDED: SECURITY — no security scheme referenced on a money-moving operation
+  /accounts/{accountId}/acctCfg:
+    put:
+      tags: [Accounts]
+      operationId: updateAccountConfig
+      summary: This endpoint updates the configuration of the account configuration settings   # SEEDED: LAZY (subtle) — long but content-free, circular wording
+      description: Allows the user to update the account configuration settings for the account using this endpoint.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:                        # SEEDED: INPUT — opaque abbreviations, no semantics or allowed values
+              odLmt: {type: integer}
+              stmtFrq: {type: string}
+              chnlFlg: {type: string}
+      responses:
+        "200":
+          description: Updated account resource.
+          schema: {$ref: "#/definitions/Account"}
+        "400":
+          description: Invalid configuration combination.
+          schema: {$ref: "#/definitions/Error"}
+  /customers:
+    get:
+      tags: [Customers]
+      operationId: listCustomers
+      summary: List customers matching a filter
+      description: >
+        Returns customers matching the filter, ordered by customer number. Intended for
+        back-office lookup screens.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: q                              # SEEDED: INPUT — single-letter param, no explanation of match semantics
+          in: query
+          type: string
+          required: false
+        - name: flt                            # SEEDED: INPUT — cryptic filter param, undocumented mini-language
+          in: query
+          type: string
+          required: false
+        - name: lmt                            # SEEDED: INPUT — abbreviation, string where integer expected
+          in: query
+          type: string
+          required: false
+      responses:
+        "200":
+          description: Customers matching the filter.
+          schema: {$ref: "#/definitions/CustomerList"}
+        "400":
+          description: Filter expression is invalid; message names the parameter.
+          schema: {$ref: "#/definitions/Error"}
+  /loans:
+    post:
+      tags: [Loans]
+      operationId: applyForLoan
+      summary: Submit a loan application
+      description: >
+        Submits a loan application for scoring. Requires the "loans.write" scope on the
+        OAuth token.
+      security: [{oauth: []}]                  # SEEDED: SECURITY — references scheme "oauth" that is never defined in securityDefinitions
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/LoanApplication"}
+      responses:
+        "200":                                 # SEEDED: RESPONSE — success and rejection share one schema; description contradicts (says "created" on 200)
+          description: Application created. Also returned when the application is rejected by scoring.
+          schema: {$ref: "#/definitions/LoanApplicationOutcome"}
+  /loans/{loanId}/schedule:
+    get:
+      tags: [Loans]
+      operationId: getRepaymentSchedule
+      summary: Fetch the repayment schedule for a loan
+      description: >
+        Returns the remaining repayment schedule with per-installment principal and
+        interest split.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          required: true
+          description: Loan number in LN######## format.
+      responses:
+        "200":
+          description: The repayment schedule.   # SEEDED: RESPONSE — 200 declared with no schema at all
+        "404":
+          description: Unknown loan.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/{accountId}/stmt:
+    get:
+      tags: [Accounts]
+      operationId: getStatement
+      summary: Download an account statement
+      description: >
+        Returns a statement for the requested period. Statements older than 24 months
+        are archived and take longer to produce.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+        - name: typ                            # SEEDED: INPUT — magic values ("F"/"S"?) never enumerated or explained
+          in: query
+          type: string
+          required: true
+      responses:
+        "200":
+          description: The statement document reference.
+          schema: {$ref: "#/definitions/StatementRef"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /customers/onboard:
+    post:
+      tags: [Customers]
+      operationId: onboardCustomer
+      summary: Onboard a new retail customer
+      description: >
+        Creates a customer record and starts KYC. The entity and userId headers identify
+        the branch operator performing the onboarding.
+      parameters:
+        - name: entity                         # SEEDED: SECURITY — operator auth pushed into ad-hoc headers, no scheme referenced
+          in: header
+          type: string
+          required: true
+        - name: userId
+          in: header
+          type: string
+          required: true
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:                        # SEEDED: INPUT — nothing marked required, dob format unstated
+              fullName: {type: string}
+              dob: {type: string}
+              nationalId: {type: string}
+              email: {type: string}
+      responses:
+        "201":
+          description: Customer created with KYC status PENDING.
+          schema: {$ref: "#/definitions/Customer"}
+        "400":
+          description: Validation failure.
+          schema: {$ref: "#/definitions/Error"}
+  /loans/list:
+    get:
+      tags: [Loans]
+      operationId: listLoans
+      summary: List loans for the caller
+      description: >
+        Returns loans visible to the caller. A valid session token is required and the
+        caller must belong to the servicing branch.
+      parameters:
+        - name: branch
+          in: query
+          type: string
+          required: false
+          description: Branch code to filter by.
+      responses:
+        "200":
+          description: Loans visible to the caller.
+          schema: {$ref: "#/definitions/LoanList"}
+        "400":
+          description: Unknown branch code.
+          schema: {$ref: "#/definitions/Error"}
+      # SEEDED: SECURITY — description demands a session token but no security scheme is referenced anywhere on the operation
+  /loans/{loanId}:
+    put:
+      tags: [Loans]
+      operationId: updateLoanTerms
+      summary: Update servicing terms of a loan
+      description: >                           # SEEDED: TANGLED — auth setup + business rules + error handling + changelog in one blob
+        To call this you must first obtain a token from /oauth/token using branch
+        credentials and attach it as a Bearer header. Interest rate changes above 50
+        basis points require dual approval and will be queued for a second officer.
+        If you receive error 4711 the loan is frozen by collections and you must call
+        the collections desk. Since release 2024.06 the graceDays field replaces the
+        old grace_period field which is still accepted but deprecated and will be
+        removed in 2025.01; migrate as soon as possible.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          required: true
+          description: Loan number in LN######## format.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/LoanTermsUpdate"}
+      responses:
+        "200":
+          description: Updated loan resource.
+          schema: {$ref: "#/definitions/Loan"}
+        "409":
+          description: Change requires dual approval and was queued.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/batch:
+    post:
+      tags: [Payments]
+      operationId: submitPaymentBatch
+      summary: Submit a batch of payments for processing
+      # SEEDED: BLOATED — verbose marketing filler, low information density
+      # SEEDED: TANGLED — same field also mixes auth advice and support escalation into the description
+      description: >
+        The Atlas payment batch capability represents our next-generation, enterprise-grade,
+        fully resilient high-throughput payment processing pipeline, engineered from the
+        ground up to deliver best-in-class straight-through processing rates for
+        institutional and retail flows alike. Leveraging a modern, cloud-native,
+        horizontally scalable architecture, this endpoint empowers integrators to
+        seamlessly submit collections of payment instructions in a single, convenient,
+        atomic network interaction, dramatically reducing integration complexity and
+        operational overhead while unlocking unparalleled efficiency gains across the
+        entire payment value chain. Batches are processed with industry-leading
+        reliability. Remember to authenticate first; tokens come from the identity
+        service. If a batch fails overnight, raise a P2 ticket with operations and
+        include the batchId.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/PaymentBatchRequest"}
+      responses:
+        "202":
+          description: Batch accepted; poll the batch resource for progress.
+          schema: {$ref: "#/definitions/BatchAccepted"}
+        "400":
+          description: Batch failed validation; no instructions were queued.
+          schema: {$ref: "#/definitions/Error"}
+  /customers/{customerId}/history:
+    get:
+      tags: [Customers]
+      operationId: getCustomerHistory
+      summary: Fetch the interaction history for a customer
+      description: >                           # SEEDED: BLOATED — repeats the same fact in different words, adds no operational detail
+        This endpoint returns the history of the customer. The history returned by this
+        endpoint is the customer's history. By calling this endpoint, a consumer is able
+        to retrieve, for a given customer, the historical record of that customer's
+        interactions, which is to say the interaction history belonging to the customer
+        in question. The result contains historical interaction entries for the customer,
+        that is, the customer's past interactions as recorded historically by the system.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: customerId
+          in: path
+          type: string
+          required: true
+          description: 8-digit Atlas customer number.
+      responses:
+        "200":
+          description: Interaction history entries, newest first.
+          schema: {$ref: "#/definitions/InteractionList"}
+        "404":
+          description: Unknown customer number.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/{accountId}/block:
+    post:
+      tags: [Accounts]
+      operationId: blockAccount
+      summary: Place a block on an account
+      description: >                           # SEEDED: TANGLED — fraud policy, legal citations, internal routing and auth mixed together
+        Blocks debits on the account. Note that under AML directive 2018/843 article 18
+        the compliance officer must be informed within 24 hours, and the case must be
+        routed to queue FRAUD-7 in the case tool unless it originated from the branch
+        network in which case queue BR-OPS-2 applies; the caller must hold the
+        "accounts.block" entitlement which is requested through the IAM portal, and
+        remember that blocked accounts still accrue interest as per product terms
+        section 4.2.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/BlockRequest"}
+      responses:
+        "200":
+          description: Account blocked; body reflects the new status.
+          schema: {$ref: "#/definitions/Account"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/list:
+    get:
+      tags: [Payments]
+      operationId: listPayments
+      summary: List payments for an account
+      # SEEDED: BLOATED — boilerplate paragraph duplicated from another operation, low value
+      # SEEDED: TANGLED — same field also mixes support escalation and retention policy into the listing description
+      description: >
+        The Atlas payment capability represents our next-generation, enterprise-grade,
+        fully resilient payment platform engineered to deliver best-in-class experiences.
+        Leveraging a modern, cloud-native, horizontally scalable architecture, this
+        endpoint empowers integrators to seamlessly retrieve collections of payment
+        records in a single, convenient network interaction, dramatically reducing
+        integration complexity while unlocking unparalleled efficiency across the entire
+        payment value chain. Records older than 13 months live in the archive tier; if
+        you need them raise a ticket with data services. Authentication problems should
+        go to the identity team.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: query
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+      responses:
+        "200":
+          description: Payments initiated from the account, newest first.
+          schema: {$ref: "#/definitions/PaymentList"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/{accountId}/limits:
+    get:
+      tags: [Accounts]
+      operationId: getAccountLimits
+      summary: Fetch spending and transfer limits for an account
+      description: >                           # SEEDED: BLOATED (subtle) — superficially informative but every sentence is filler/restatement
+        This operation provides the consumer of the API with the ability to obtain the
+        limits configured on the account. Limits are important because they limit what
+        can be done on the account. The limits returned are the ones that are currently
+        configured. Consumers who wish to know the limits of an account will find that
+        this endpoint returns them.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+        - name: chn                            # SEEDED: INPUT — channel code, values never listed
+          in: query
+          type: string
+          required: false
+      responses:
+        "200":
+          description: Current limit configuration for the account.
+          schema: {$ref: "#/definitions/LimitSet"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /customers/{customerId}/preferences:
+    get:
+      tags: [Customers]
+      operationId: getCustomerPreferences
+      summary: Fetch communication preferences for a customer
+      description: >
+        Returns channel-level communication preferences (email, SMS, push, letter) with
+        per-category opt-in flags.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: customerId
+          in: path
+          type: string
+          required: true
+          description: 8-digit Atlas customer number.
+      responses:
+        "200":
+          description: The preference set for the customer.
+          schema: {$ref: "#/definitions/CustomerPreferences"}   # SEEDED: FRAGMENTED — CustomerPreferences is never defined in this document
+        "404":
+          description: Unknown customer number.
+          schema: {$ref: "#/definitions/Error"}
+  /loans/{loanId}/repayments:
+    post:
+      tags: [Loans]
+      operationId: recordRepayment
+      summary: Record a manual repayment against a loan
+      description: >
+        Records an out-of-schedule repayment (e.g. branch cash payment) and recalculates
+        the remaining schedule.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          required: true
+          description: Loan number in LN######## format.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/RepaymentRequest"}      # SEEDED: FRAGMENTED — RepaymentRequest is never defined in this document
+      responses:
+        "200":                                 # SEEDED: RESPONSE — generic envelope, no error responses for a money-moving operation
+          description: Success
+          schema: {$ref: "#/definitions/GenericResponse"}
+  /loans/{loanId}/discharge:
+    get:
+      tags: [Loans]
+      operationId: getDischargeSummary
+      summary: Fetch the early-discharge quote for a loan
+      description: >
+        Returns the amount required to fully discharge the loan today, including
+        break costs and fee waivers where applicable.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          required: true
+          description: Loan number in LN######## format.
+      responses:
+        "200":
+          description: The discharge quote, valid until end of business today.
+          schema: {$ref: "#/definitions/DischargeSummary"}      # SEEDED: FRAGMENTED — DischargeSummary is never defined in this document
+        "404":
+          description: Unknown loan.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/{paymentId}/status:
+    put:
+      tags: [Payments]
+      operationId: overridePaymentStatus
+      summary: Manually override the status of a payment
+      description: >
+        Back-office override for stuck payments. Requires the operations entitlement;
+        every override is audit-logged with the officer identity.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: paymentId
+          in: path
+          type: string
+          format: uuid
+          required: true
+          description: Payment UUID.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/PaymentStatusOverride"} # SEEDED: FRAGMENTED — PaymentStatusOverride is never defined in this document
+      responses:
+        "200":
+          description: Payment with the overridden status.
+          schema: {$ref: "#/definitions/Payment"}
+        "404":
+          description: Unknown payment id.
+          schema: {$ref: "#/definitions/Error"}
+  /accounts/{accountId}/summary:
+    get:
+      tags: [Accounts]
+      operationId: getAccountSummary
+      summary: Fetch a combined account summary
+      description: >                           # SEEDED: EXCESS_STRUCTURED — JSON class definition embedded in prose description
+        Returns the combined summary. The response follows this structure:
+        { "class": "AccountSummary", "fields": { "accountId": "string(10)",
+        "balances": { "booked": "Money", "available": "Money" },
+        "flags": "Array<AccountFlag>", "lastTxnDate": "ISO8601" } }
+        where Money is { "amount": "decimal", "currency": "ISO4217" }.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: accountId
+          in: path
+          type: string
+          required: true
+          description: 10-digit Atlas account number.
+      responses:
+        "200":
+          description: The combined account summary.
+          schema: {$ref: "#/definitions/AccountSummary"}
+        "404":
+          description: Unknown account.
+          schema: {$ref: "#/definitions/Error"}
+  /customers/{customerId}/documents:
+    post:
+      tags: [Customers]
+      operationId: attachCustomerDocument
+      summary: Attach an identity document to a customer
+      description: >                           # SEEDED: EXCESS_STRUCTURED — field-by-field pseudo-schema table written in the description
+        Attaches a document. Body fields:
+        | field | type | required | notes |
+        | docType | enum(PASSPORT,ID_CARD,LICENCE) | yes | document class |
+        | number | string | yes | document number |
+        | issuedBy | string(2) | yes | ISO country |
+        | validUntil | date | no | expiry |
+        | fileRef | uuid | yes | upload handle |
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: customerId
+          in: path
+          type: string
+          required: true
+          description: 8-digit Atlas customer number.
+        - name: body
+          in: body
+          required: true
+          schema: {$ref: "#/definitions/DocumentAttachRequest"}
+      responses:
+        "201":
+          description: Document attached and queued for verification.
+          schema: {$ref: "#/definitions/DocumentRef"}
+        "400":
+          description: Unsupported document type or expired document.
+          schema: {$ref: "#/definitions/Error"}
+  /loans/{loanId}/summary:
+    get:
+      tags: [Loans]
+      operationId: getLoanSummary
+      summary: Fetch the servicing summary for a loan
+      description: >                           # SEEDED: EXCESS_STRUCTURED — TypeScript-style interface pasted into the description
+        Servicing summary for dashboards. interface LoanSummary { loanId: string;
+        principalOutstanding: number; nextInstallment: { dueDate: string; amount:
+        number }; arrears: { days: number; amount: number } | null; status:
+        "CURRENT" | "ARREARS" | "DEFAULT" }
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          required: true
+          description: Loan number in LN######## format.
+      responses:
+        "200":
+          description: The servicing summary.
+          schema: {$ref: "#/definitions/LoanSummary"}
+        "404":
+          description: Unknown loan.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/fees/calculator:
+    get:
+      tags: [Payments]
+      operationId: calculatePaymentFees
+      summary: Calculate the fees for a prospective payment
+      description: >                           # SEEDED: EXCESS_STRUCTURED — XML schema fragment embedded in prose
+        Quotes fees before initiation. Response conforms to:
+        <xs:complexType name="FeeQuote"><xs:sequence>
+        <xs:element name="fee" type="xs:decimal"/>
+        <xs:element name="currency" type="xs:string"/>
+        <xs:element name="expiresAt" type="xs:dateTime"/>
+        </xs:sequence></xs:complexType>
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: amount
+          in: query
+          type: string
+          required: true
+          description: Payment amount as a decimal string, e.g. "125.50".
+        - name: currency
+          in: query
+          type: string
+          required: true
+          description: ISO 4217 currency code.
+      responses:
+        "200":
+          description: The fee quote.
+          schema: {$ref: "#/definitions/FeeQuote"}
+        "400":
+          description: Unsupported currency or non-decimal amount.
+          schema: {$ref: "#/definitions/Error"}
+  /payments/paymentStatusCheck/{paymentId}:
+    get:
+      tags: [Payments]
+      operationId: paymentStatusCheck
+      summary: Check status                    # SEEDED: LAZY — 2-word summary, no description
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: paymentId
+          in: path
+          type: string
+          required: true
+          description: Payment UUID.
+      responses:
+        "200":
+          description: Current payment status.
+          schema: {$ref: "#/definitions/PaymentStatus"}
+        "404":
+          description: Unknown payment id.
+          schema: {$ref: "#/definitions/Error"}
+      # SEEDED: PATH_AND_METHOD — action-oriented path segment "paymentStatusCheck" instead of a status resource
+  /accounts/deleteAccount:
+    post:                                      # SEEDED: PATH_AND_METHOD — verb path + POST used for deletion (DELETE territory)
+      tags: [Accounts]
+      operationId: deleteAccount
+      summary: Close and delete an account
+      description: >
+        Closes the account and schedules record deletion after the retention period.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: body
+          in: body
+          required: true
+          schema:
+            type: object
+            properties:                        # SEEDED: INPUT — closure reason codes never enumerated, account id type-only
+              acct: {type: string}
+              rsnCd: {type: string}
+      responses:
+        "200":                                 # SEEDED: RESPONSE — bare 200 "OK", no schema, no error contract for an irreversible operation
+          description: OK
+  /customers/{customerId}/getRiskScore:
+    get:
+      tags: [Customers]
+      operationId: getRiskScore
+      summary: Fetch the current risk score for a customer
+      description: >
+        Returns the credit risk score band (A-E) with the score date. Recalculated
+        nightly.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: customerId
+          in: path
+          type: string
+          required: true
+          description: 8-digit Atlas customer number.
+      responses:
+        "200":
+          description: The risk score band with calculation date.
+          schema: {$ref: "#/definitions/RiskScore"}
+        "404":
+          description: Unknown customer number.
+          schema: {$ref: "#/definitions/Error"}
+      # SEEDED: PATH_AND_METHOD (subtle) — correct method, but verb "get" embedded in the path segment
+  /loans/{loanId}/close:
+    delete:
+      tags: [Loans]
+      operationId: closeLoan
+      summary: Close a fully repaid loan
+      description: >
+        Closes the loan record. Admin entitlement required; the loan must have zero
+        outstanding principal.
+      parameters:
+        - name: loanId
+          in: path
+          type: string
+          required: true
+          description: Loan number in LN######## format.
+      responses:
+        "200":                                 # SEEDED: RESPONSE — no schema, no 404/409 for the documented failure modes
+          description: OK
+      # SEEDED: SECURITY — description says "Admin entitlement required" but no security scheme is referenced
+
+definitions:
+  AccountList:
+    type: object
+    required: [items]
+    properties:
+      items:
+        type: array
+        items: {$ref: "#/definitions/Account"}
+      nextCursor:
+        type: string
+        description: Cursor for the next page; absent on the last page.
+  Account:
+    type: object
+    required: [accountId, iban, currency, status]
+    properties:
+      accountId: {type: string, description: 10-digit Atlas account number.}
+      iban: {type: string, description: IBAN of the account.}
+      currency: {type: string, description: ISO 4217 currency code.}
+      status: {type: string, enum: [ACTIVE, DORMANT, BLOCKED, CLOSED], description: Lifecycle status.}
+      openedOn: {type: string, format: date, description: Opening date.}
+  CreateAccountRequest:
+    type: object
+    required: [customerId, currency, productCode]
+    properties:
+      customerId: {type: string, description: 8-digit customer number of the owner.}
+      currency: {type: string, description: ISO 4217 currency code.}
+      productCode: {type: string, enum: [CURRENT, SAVINGS, YOUTH], description: Product to open.}
+  AccountSearchRequest:
+    type: object
+    properties:
+      states:
+        type: array
+        items: {type: string, enum: [ACTIVE, DORMANT, BLOCKED, CLOSED]}
+        description: Match any of these lifecycle states.
+      ibanPrefix: {type: string, description: Leading characters of the IBAN.}
+      customerId: {type: string, description: Restrict to one owner.}
+  Balance:
+    type: object
+    required: [booked, available, currency]
+    properties:
+      booked: {type: number, description: Booked balance.}
+      available: {type: number, description: Available balance after holds.}
+      currency: {type: string, description: ISO 4217 currency code.}
+  TransactionList:
+    type: object
+    properties:
+      items:
+        type: array
+        items: {$ref: "#/definitions/Transaction"}
+  Transaction:
+    type: object
+    properties:
+      id: {type: string, description: Transaction identifier.}
+      amount: {type: number, description: Signed amount; negative = debit.}
+      bookingDate: {type: string, format: date, description: Booking date.}
+      narrative: {type: string, description: Statement narrative.}
+  Customer:
+    type: object
+    required: [customerId, fullName, kycStatus]
+    properties:
+      customerId: {type: string, description: 8-digit customer number.}
+      fullName: {type: string, description: Legal name.}
+      kycStatus: {type: string, enum: [PENDING, ACTIVE, REJECTED], description: KYC state.}
+      email: {type: string, description: Primary email.}
+  CustomerList:
+    type: object
+    properties:
+      items:
+        type: array
+        items: {$ref: "#/definitions/Customer"}
+  Address:
+    type: object
+    required: [line1, city, postalCode, country]
+    properties:
+      line1: {type: string, description: Street address.}
+      line2: {type: string, description: Optional second line.}
+      city: {type: string, description: City.}
+      postalCode: {type: string, description: Postal code.}
+      country: {type: string, description: ISO 3166-1 alpha-2 country code.}
+  Payment:
+    type: object
+    required: [paymentId, state, amount, currency]
+    properties:
+      paymentId: {type: string, format: uuid, description: Payment identifier.}
+      state: {type: string, enum: [PENDING, SETTLED, RETURNED, FAILED], description: Processing state.}
+      amount: {type: number, description: Payment amount.}
+      currency: {type: string, description: ISO 4217 currency code.}
+      settledAt: {type: string, format: date-time, description: Settlement time when settled.}
+  PaymentList:
+    type: object
+    properties:
+      items:
+        type: array
+        items: {$ref: "#/definitions/Payment"}
+  # NOTE: deliberately well-documented — shared by initiatePayment and submitPaymentBatch,
+  # which are NOT labeled INPUT; an under-documented schema here would poison the oracle.
+  PaymentRequest:
+    type: object
+    required: [debtorIban, creditorIban, amount, currency]
+    properties:
+      debtorIban: {type: string, description: IBAN of the paying account.}
+      creditorIban: {type: string, description: IBAN of the receiving account.}
+      amount: {type: number, description: Payment amount, positive, two decimal places.}
+      currency: {type: string, description: ISO 4217 currency code.}
+      reference: {type: string, description: Optional end-to-end reference shown to both parties.}
+  PaymentBatchRequest:
+    type: object
+    required: [instructions]
+    properties:
+      instructions:
+        type: array
+        items: {$ref: "#/definitions/PaymentRequest"}
+        description: Payment instructions; the whole batch is validated atomically.
+  BatchAccepted:
+    type: object
+    required: [batchId]
+    properties:
+      batchId: {type: string, description: Identifier to poll for batch progress.}
+  PaymentStatus:
+    type: object
+    properties:
+      state: {type: string, description: Current processing state.}
+  Loan:
+    type: object
+    required: [loanId, principal, status]
+    properties:
+      loanId: {type: string, description: Loan number in LN######## format.}
+      principal: {type: number, description: Outstanding principal.}
+      status: {type: string, enum: [CURRENT, ARREARS, DEFAULT, CLOSED], description: Servicing status.}
+  LoanList:
+    type: object
+    properties:
+      items:
+        type: array
+        items: {$ref: "#/definitions/Loan"}
+  LoanApplication:
+    type: object
+    required: [customerId, amount, termMonths]
+    properties:
+      customerId: {type: string, description: 8-digit customer number.}
+      amount: {type: number, description: Requested principal.}
+      termMonths: {type: integer, description: Requested term in months.}
+  LoanApplicationOutcome:
+    type: object
+    properties:
+      applicationId: {type: string}
+      outcome: {type: string}
+  LoanTermsUpdate:
+    type: object
+    properties:
+      rateBps: {type: integer, description: New interest rate in basis points.}
+      graceDays: {type: integer, description: Grace days before arrears (replaces grace_period).}
+  LoanSummary:
+    type: object
+    properties:
+      loanId: {type: string, description: Loan number.}
+      principalOutstanding: {type: number, description: Remaining principal.}
+  BlockRequest:
+    type: object
+    required: [reasonCode]
+    properties:
+      reasonCode: {type: string, enum: [FRAUD, COURT_ORDER, CUSTOMER_REQUEST], description: Why the block is placed.}
+      note: {type: string, description: Free-text note for the case file.}
+  LimitSet:
+    type: object
+    properties:
+      dailyTransfer: {type: number, description: Daily transfer limit.}
+      atmWithdrawal: {type: number, description: Daily ATM withdrawal limit.}
+  StatementRef:
+    type: object
+    properties:
+      documentId: {type: string, description: Handle for the document download service.}
+  AccountSummary:
+    type: object
+    properties:
+      accountId: {type: string, description: Account number.}
+      booked: {type: number, description: Booked balance.}
+      available: {type: number, description: Available balance.}
+  DocumentAttachRequest:
+    type: object
+    required: [docType, number, issuedBy, fileRef]
+    properties:
+      docType: {type: string, enum: [PASSPORT, ID_CARD, LICENCE], description: Document class.}
+      number: {type: string, description: Document number.}
+      issuedBy: {type: string, description: ISO 3166-1 alpha-2 issuing country.}
+      validUntil: {type: string, format: date, description: Expiry date.}
+      fileRef: {type: string, format: uuid, description: Upload handle from the file service.}
+  DocumentRef:
+    type: object
+    properties:
+      documentId: {type: string, description: Stored document identifier.}
+  InteractionList:
+    type: object
+    properties:
+      items:
+        type: array
+        items:
+          type: object
+          properties:
+            at: {type: string, format: date-time, description: When the interaction happened.}
+            channel: {type: string, description: Channel of the interaction.}
+            note: {type: string, description: Summary of the interaction.}
+  RiskScore:
+    type: object
+    properties:
+      band: {type: string, enum: [A, B, C, D, E], description: Risk band, A is best.}
+      calculatedOn: {type: string, format: date, description: Date of the nightly calculation.}
+  FeeQuote:
+    type: object
+    properties:
+      fee: {type: number, description: Quoted fee.}
+      currency: {type: string, description: ISO 4217 currency code.}
+  GenericResponse:
+    type: object
+    properties:
+      status:
+        type: string
+        example: success
+      data:
+        type: object
+  Error:
+    type: object
+    required: [code, message]
+    properties:
+      code: {type: string, description: Machine-readable error code.}
+      message: {type: string, description: Human-readable explanation naming the offending field where applicable.}

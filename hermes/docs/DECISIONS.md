@@ -21,6 +21,15 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
+### 2026-07-04 — M1 (from milestone review)
+
+- **Test-plan fixture numbers corrected to the fixture as built**: ~55 → ~50 seeded instances (actual 52), "1–3 smells per op" → "most 1–3, Appendix-B clone carries 5". The composition floor (every smell ≥4 in the swagger2 fixture alone, 8 clean controls) is unchanged and now test-enforced.
+- **Oracle-poisoning hazards fixed after fixture audit**: the shared `PaymentRequest` schema was accidentally INPUT-smelly (fed two ops not labeled INPUT) — now fully documented; 8 unlabeled ops documented only 2xx responses (a spec-literal RESPONSE agent would flag them) — all now carry 4xx error responses. RESPONSE seeds remain distinguished by no-schema/generic-envelope evidence.
+- **Sampling requires an explicit seed** (`filter_operations` raises ValueError on None) — default 42 is owned by HermesConfig per the M0 decision; equal round-robin per tag (not proportional), documented in the docstring.
+- **Path globs use `fnmatch.fnmatchcase`** (case-sensitive, platform-independent); `*` crosses `/` deliberately.
+- **`trace` is enumerated for OAS3 only** (not a Swagger 2.0 method).
+- **Freeze notices added** to seeded_spec_oas3.yaml and expected.json (seeded_spec.yaml already had one).
+
 ### 2026-07-04 — M0 (from milestone review)
 
 - **Exit code 2 covers argparse usage errors as well as spec parse failures.** argparse exits 2 on bad flags by design; remapping it buys nothing. 00-SPEC §6 updated.
