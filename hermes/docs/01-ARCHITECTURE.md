@@ -139,7 +139,7 @@ key = sha256(erd_yaml + smell_id + PROMPT_VERSION[smell] + model_id)
 ## 6. Cost & rate control
 
 - `hermes estimate` and the pre-scan confirmation compute: `calls = |operations| × 9 + est. consolidations`; input ≈ ERD tokens + cache-read system prompt; output ≈ 400/call. Full 927-operation BaNCS scan ≈ 8.4k calls, order of **$15–30** with Haiku 4.5 ($1/$5 per MTok) + prompt caching; print the computed number, not this constant.
-- Semaphore concurrency 8 default; on `RateLimitError` additionally halve concurrency for 60s.
+- Semaphore concurrency 8 default; on `RateLimitError` the whole pool pauses ~60s before taking new slots (simple full-pause backoff; SDK per-call retries still apply — see DECISIONS M4).
 - `--max-endpoints`, `--sample N --seed S` (stratified by tag when possible) for cheap partial scans.
 - Usage accounting: every call appends `UsageRecord(model, input_tokens, output_tokens, cache_read_input_tokens, cost_usd)` from `response.usage`; `run.json` carries the rollup. Price table (Haiku $1/$5, Sonnet $3/$15 per MTok) lives in `config.py` with a drift comment.
 

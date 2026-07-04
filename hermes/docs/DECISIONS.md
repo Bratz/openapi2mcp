@@ -21,6 +21,16 @@ Judgment calls and deliberate deviations from the paper (arXiv:2605.14312 — gr
 
 ## Build-phase decisions
 
+### 2026-07-04 — M4 (from milestone review)
+
+- **Threading, not asyncio**: `llm.py` uses a synchronous client + `threading.BoundedSemaphore`; LangGraph's sync executor runs Send branches in a thread pool. Simpler to test deterministically than an async stack.
+- **429 backoff = full-pool pause (~60s), not halved concurrency** — docs updated to match. Pause happens BEFORE semaphore acquisition, re-checked in a loop, so throttled workers don't hold slots.
+- **Failure contract**: every per-call failure (schema validation after retry, refusal/empty `parsed_output` — which the SDK returns as `None` without raising — API errors after SDK retries) surfaces as `DetectorFailure`; the graph records detection failures as `detector_error` and falls back to rule-based verdicts on consolidation failures. Scan never aborts for one endpoint.
+- **Schema-retry is a clean resend with doubled max_tokens**, not a "repair" — the SDK enforces the schema server-side and discards failed responses client-side, so truncation is the dominant residual cause and the failed output is unrecoverable. Failed attempts' spend is **estimated** (worst-case output) and merged into the returned/raised UsageRecord (`estimated: true`) so HERMES_MAX_COST_USD stays honest.
+- **cache_control on system blocks is currently a no-op**: per-smell system prompts (~700 tokens) are far below Haiku 4.5's 4096-token minimum cacheable prefix. Kept (harmless, future-proof); cost estimates assume NO cache savings.
+- **finding.schema.json is generated**: regenerate with `python -m hermes.schemas` after any Finding model change (sync-guarded by a unit test). It describes the stored Finding record; AgentResponse enforcement happens at parse() time.
+- **ConsolidationEdit requires `new_severity` iff `action=adjust_severity`**; the M5 edit-applier clamps adjustments to ±1 step of the stored severity (the model can't see the original).
+
 ### 2026-07-04 — M3 (from milestone review)
 
 - **Prompt layout: single `smells/prompts/__init__.py`** with a `PROMPT_VERSIONS` dict instead of nine per-smell modules — the per-smell content already lives in `catalog.py` dataclasses, so per-smell modules would be nine copies of one template. 01-ARCHITECTURE layout updated.

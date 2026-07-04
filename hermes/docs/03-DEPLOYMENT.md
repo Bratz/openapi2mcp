@@ -63,7 +63,7 @@ Prices as of 2026-07; `config.py` owns the numbers. If full-scan costs become ro
 
 ## 5. Operational guidance
 
-- **Rate limits:** SDK auto-retries 429/5xx; hermes additionally halves concurrency for 60 s on a 429. If scans crawl, lower `HERMES_CONCURRENCY`; if your org tier is generous, 16 is fine.
+- **Rate limits:** SDK auto-retries 429/5xx; on a 429 hermes additionally pauses the whole worker pool for ~60 s before new calls (a scan that periodically stalls for a minute is backing off, not hung). If scans crawl, lower `HERMES_CONCURRENCY`; if your org tier is generous, 16 is fine.
 - **Interruptions are cheap:** the content-hash cache means a re-run only pays for what hasn't completed. Never delete `runs/cache.db` casually.
 - **Prompt changes invalidate deliberately:** bump the edited smell's `PROMPT_VERSION`. Never edit a prompt without bumping — silent cache poisoning.
 - **Data sensitivity:** endpoint documentation text is sent to the Anthropic API. The BaNCS spec here is a public demo spec, so that is fine. The paper itself faced the confidential case and solved it by restricting model selection to locally-deployable LLMs (their winner: gpt-oss:120b — see 05-PAPER-FACTS §1); if confidential specs ever need scanning, the precedent is a local backend behind the `llm.py` seam, not sending the spec out.

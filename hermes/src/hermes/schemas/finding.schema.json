@@ -1,0 +1,214 @@
+{
+  "$defs": {
+    "DetectorInfo": {
+      "properties": {
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "prompt_version": {
+          "title": "Prompt Version",
+          "type": "string"
+        },
+        "truncation_applied": {
+          "default": false,
+          "title": "Truncation Applied",
+          "type": "boolean"
+        },
+        "short_justification": {
+          "default": false,
+          "title": "Short Justification",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "model",
+        "prompt_version"
+      ],
+      "title": "DetectorInfo",
+      "type": "object"
+    },
+    "EndpointInfo": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "method": {
+          "title": "Method",
+          "type": "string"
+        },
+        "operation_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Operation Id"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path",
+        "method",
+        "operation_id"
+      ],
+      "title": "EndpointInfo",
+      "type": "object"
+    },
+    "Evidence": {
+      "properties": {
+        "location": {
+          "description": "Dot-path relative to the operation, e.g. 'responses.200.description'",
+          "title": "Location",
+          "type": "string"
+        },
+        "excerpt": {
+          "title": "Excerpt",
+          "type": "string"
+        }
+      },
+      "required": [
+        "location",
+        "excerpt"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "Extensions": {
+      "description": "Dashboard-only fields \u2014 never used in eval scoring (DECISIONS.md).",
+      "properties": {
+        "severity": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "confidence": {
+          "title": "Confidence",
+          "type": "number"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/Evidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "severity",
+        "confidence",
+        "evidence"
+      ],
+      "title": "Extensions",
+      "type": "object"
+    },
+    "Suggestion": {
+      "properties": {
+        "action_title": {
+          "description": "Exact format: '[<SMELL>] - <short action title>'",
+          "title": "Action Title",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        }
+      },
+      "required": [
+        "action_title",
+        "description"
+      ],
+      "title": "Suggestion",
+      "type": "object"
+    }
+  },
+  "description": "Canonical detection record (00-SPEC \u00a74): paper core + extensions.",
+  "properties": {
+    "id": {
+      "title": "Id",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "api_title": {
+      "title": "Api Title",
+      "type": "string"
+    },
+    "endpoint": {
+      "$ref": "#/$defs/EndpointInfo"
+    },
+    "smell": {
+      "enum": [
+        "LAZY",
+        "BLOATED",
+        "TANGLED",
+        "FRAGMENTED",
+        "EXCESS_STRUCTURED",
+        "PATH_AND_METHOD",
+        "INPUT",
+        "RESPONSE",
+        "SECURITY"
+      ],
+      "title": "Smell",
+      "type": "string"
+    },
+    "category": {
+      "enum": [
+        "documentation",
+        "rest"
+      ],
+      "title": "Category",
+      "type": "string"
+    },
+    "justification": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Justification",
+      "type": "array"
+    },
+    "suggestions": {
+      "items": {
+        "$ref": "#/$defs/Suggestion"
+      },
+      "title": "Suggestions",
+      "type": "array"
+    },
+    "extensions": {
+      "$ref": "#/$defs/Extensions"
+    },
+    "detector": {
+      "$ref": "#/$defs/DetectorInfo"
+    }
+  },
+  "required": [
+    "id",
+    "run_id",
+    "api_title",
+    "endpoint",
+    "smell",
+    "category",
+    "justification",
+    "suggestions",
+    "extensions",
+    "detector"
+  ],
+  "title": "Finding",
+  "type": "object"
+}
